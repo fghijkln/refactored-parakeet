@@ -30,6 +30,69 @@ object Runtime {
     fun configFile(ctx: Context) = File(homeDir(ctx), "parakeet-config.json")
     fun pluginSettingsFile(ctx: Context) = File(homeDir(ctx), "parakeet-settings.json")
     fun logFile(ctx: Context) = File(ctx.filesDir, "dsh.log")
+    fun libLinkDir(ctx: Context) = File(ctx.filesDir, "termux-lib")
+
+    /**
+     * The Termux ELFs ship unmodified, so they still ask for their original
+     * sonames (libz.so.1, libc++_shared.so, libicuuc.so.78 ...) while the APK
+     * can only carry flat `lib*_tx.so` names. Create `filesDir/termux-lib/<soname>`
+     * symlinks into nativeLibraryDir and put that dir first on LD_LIBRARY_PATH.
+     * The linker follows the symlink and maps the target, which lives in the
+     * (executable) nativeLibraryDir, so W^X is not involved.
+     */
+    fun ensureLibLinks(ctx: Context): File {
+        val dir = libLinkDir(ctx).apply { mkdirs() }
+        val nativeDir = File(ctx.applicationInfo.nativeLibraryDir)
+        val links = sonameLinks(ctx, nativeDir)
+        dir.listFiles()?.forEach { if (it.name !in links) it.delete() }
+        for ((soname, flat) in links) {
+            val target = File(nativeDir, flat)
+            if (!target.isFile) continue
+            val link = File(dir, soname)
+            try {
+                val cur = try { android.system.Os.readlink(link.absolutePath) } catch (_: Exception) { null }
+                if (cur == target.absolutePath) continue
+                link.delete()
+                android.system.Os.symlink(target.absolutePath, link.absolutePath)
+            } catch (e: Exception) {
+                Log.w(TAG, "lib link $soname -> $flat failed: $e")
+            }
+        }
+        return dir
+    }
+
+    /** soname -> flat file name, from the manifest packaged for this ABI. */
+    fun sonameLinks(ctx: Context, nativeDir: File): Map<String, String> {
+        val candidates = abiCandidates(nativeDir.name)
+        for (abi in candidates) {
+            val text = try {
+                ctx.assets.open("termux-manifest-$abi.json").bufferedReader().use { it.readText() }
+            } catch (_: Exception) { continue }
+            return parseSonames(text).filterValues { File(nativeDir, it).isFile }
+        }
+        return emptyMap()
+    }
+
+    /** nativeLibraryDir ends in the install ABI's short name (arm64, x86_64, arm). */
+    fun abiCandidates(dirName: String): List<String> = when (dirName) {
+        "arm64" -> listOf("arm64-v8a")
+        "x86_64" -> listOf("x86_64")
+        "arm" -> listOf("armeabi-v7a")
+        "x86" -> listOf("x86")
+        else -> listOf(dirName, "arm64-v8a", "x86_64")
+    }
+
+    fun parseSonames(manifestJson: String): Map<String, String> {
+        val obj = org.json.JSONObject(manifestJson).optJSONObject("sonames") ?: return emptyMap()
+        val out = linkedMapOf<String, String>()
+        for (k in obj.keys()) {
+            val v = obj.getString(k)
+            // Only plain file names: never let a manifest entry escape the dirs.
+            if ('/' in k || '/' in v || k.startsWith(".")) continue
+            out[k] = v
+        }
+        return out
+    }
 
     /** True when the packaged node binary is present for this device's ABI. */
     fun nodePresent(ctx: Context) = nodeBinary(ctx).canExecute()
@@ -80,8 +143,8 @@ object Runtime {
     /**
      * The environment every DSH process gets.
      *
-     * LD_LIBRARY_PATH points at nativeLibraryDir so the repackaged Termux
-     * libraries (libicuuc_tx.so and friends) resolve; PATH puts it first so
+     * LD_LIBRARY_PATH = termux-lib (soname symlinks, see [ensureLibLinks]) then
+     * nativeLibraryDir, so the unmodified Termux libraries resolve; PATH puts it first so
      * `bash` and `node` are found by name from inside the agent's own shell
      * commands. TMPDIR must be app-private: /tmp does not exist on Android.
      */
@@ -93,7 +156,7 @@ object Runtime {
             "HOME" to ctx.filesDir.absolutePath,
             "TMPDIR" to File(ctx.cacheDir, "tmp").apply { mkdirs() }.absolutePath,
             "PATH" to listOf(bin.absolutePath, nativeDir, "/system/bin", "/system/xbin").joinToString(":"),
-            "LD_LIBRARY_PATH" to nativeDir,
+            "LD_LIBRARY_PATH" to "${libLinkDir(ctx).absolutePath}:$nativeDir",
             "DSH_HOME" to home.absolutePath,
             "PARAKEET_CONFIG" to configFile(ctx).absolutePath,
             "PARAKEET_SETTINGS" to pluginSettingsFile(ctx).absolutePath,

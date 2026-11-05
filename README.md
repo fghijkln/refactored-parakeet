@@ -65,16 +65,26 @@ extracts the `.deb`s in pure Python, and:
 
 * ships executables as `libnode_exec.so` / `libbash_exec.so` (Android only
   extracts `lib*.so` from `lib/<abi>/`);
-* renames every library to `lib<name>_tx.so` and rewrites `DT_NEEDED`/`SONAME`
-  with patchelf — flat `lib*.so` names are required for packaging, and the
-  suffix avoids collisions with Android's own `libz.so`, `libcrypto.so`,
-  `libssl.so` (different builds);
-* sets `RUNPATH=$ORIGIN`; the app also sets `LD_LIBRARY_PATH=nativeLibraryDir`.
+* ships every library as `lib<name>_tx.so` — flat `lib*.so` names are required
+  for packaging, and the suffix avoids collisions with Android's own `libz.so`,
+  `libcrypto.so`, `libssl.so` (different builds);
+* **does not modify any ELF.** The manifest (`assets/termux-manifest-<abi>.json`)
+  maps each original soname (`libz.so.1`, `libc++_shared.so`, `libicuuc.so.78`…)
+  to its flat file; at startup the app creates `filesDir/termux-lib/<soname>`
+  symlinks into `nativeLibraryDir` and runs node/bash with
+  `LD_LIBRARY_PATH=filesDir/termux-lib:nativeLibraryDir`.
+
+*Why not patchelf:* an earlier version renamed `DT_NEEDED`/`SONAME` with patchelf
+0.18. On these 16 KiB-aligned Termux ELFs patchelf wrote `.dynstr`/`.dynsym` at
+file offsets that disagree with the `PT_LOAD` mapping them (x86_64 node, bash,
+ICU, OpenSSL, SQLite, readline), and Bionic's linker crashed in
+`soinfo::set_dt_runpath` before `main` (SIGSEGV, exit 139, emulator tombstone).
+Byte-identical Termux binaries plus soname symlinks remove that risk for every ABI.
 
 **W^X (Android 10+):** apps targeting API 29+ cannot `execve` files in their data
 dir. Executables therefore live in `nativeLibraryDir` (`android:extractNativeLibs="true"`,
 `packaging.jniLibs.useLegacyPackaging = true`, `keepDebugSymbols` so AGP never strips
-the patchelf'd ELFs). `filesDir/bin/{node,bash}` are **symlinks** into
+the prebuilt ELFs). `filesDir/bin/{node,bash}` are **symlinks** into
 `nativeLibraryDir` — execve checks the target inode, so this is allowed where a
 shell-script shim would be refused. JS is data and is unzipped to `filesDir/dsh`.
 
@@ -178,7 +188,7 @@ CI (`.github/workflows/android.yml`) does everything: build the DSH bundle and r
 Linux smoke test → repackage Termux node/bash for arm64-v8a and x86_64 → Gradle unit
 tests + APKs → emulator smoke test → GitHub Release `v0.1.0`.
 
-Locally (Linux, Node 24, JDK 17, Android SDK, Gradle 8.11, patchelf, zip):
+Locally (Linux, Node 24, JDK 17, Android SDK, Gradle 8.11, zip, zstd):
 
 ```bash
 runtime/scripts/build_dsh_bundle.sh /tmp/dsh-rt app/src/main/assets/dsh-bundle.zip
@@ -240,9 +250,12 @@ DSH 插件无需修改即可安装运行。
 ### 架构要点
 
 * **Node ≥ 24:** 采用 Termux 预编译的 `nodejs-lts`(Bionic libc)。`fetch_termux.py`
-  解析 Termux 软件源、下载依赖、用 patchelf 把所有库改名为 `lib<名字>_tx.so`
+  解析 Termux 软件源、下载依赖,把所有库原样(不修改 ELF)改名为 `lib<名字>_tx.so`
   (避免与系统的 `libz.so`/`libcrypto.so`/`libssl.so` 冲突),可执行文件改名为
-  `libnode_exec.so`/`libbash_exec.so`,放进 `jniLibs`。
+  `libnode_exec.so`/`libbash_exec.so`,放进 `jniLibs`。应用启动时按清单在
+  `filesDir/termux-lib/` 下创建“原始 soname → nativeLibraryDir 文件”的符号链接,
+  并设置 `LD_LIBRARY_PATH`。(早期版本用 patchelf 改写 ELF,导致 x86_64 上
+  `.dynstr` 文件偏移与 PT_LOAD 不一致、链接器段错误,已弃用。)
 * **W^X:** Android 10+ 禁止执行应用数据目录中的文件,所以可执行文件放在
   `nativeLibraryDir`(`extractNativeLibs=true` + legacy packaging),
   `filesDir/bin/{node,bash}` 是指向那里的符号链接。

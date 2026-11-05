@@ -51,6 +51,7 @@ jobs:
           for abi in arm64-v8a x86_64; do
             echo "== $abi"; ls -la out/jniLibs/$abi
             for f in out/jniLibs/$abi/*.so; do echo "$(basename $f): $(patchelf --print-needed $f | tr '\n' ' ')"; done
+            python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['sonames'])" out/assets/termux-manifest-$abi.json
           done
           cat out/assets/termux-manifest-arm64-v8a.json
 

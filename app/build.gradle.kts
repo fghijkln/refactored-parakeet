@@ -55,7 +55,7 @@ android {
         // they must be extracted to disk, not mapped from the APK.
         jniLibs {
             useLegacyPackaging = true
-            // Never strip: these are prebuilt, patchelf-edited Termux ELFs.
+            // Never strip: these are prebuilt, unmodified Termux ELFs.
             keepDebugSymbols += "**/*.so"
         }
     }

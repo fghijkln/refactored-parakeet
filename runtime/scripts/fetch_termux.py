@@ -7,16 +7,22 @@ What it does
      requested packages plus their transitive runtime dependencies.
   2. Downloads each .deb, extracts data.tar.* in pure Python (no dpkg/xz needed).
   3. Copies executables as `lib<name>_exec.so` (e.g. libnode_exec.so) and every
-     shared library they (transitively) need as `lib<stem>.so`.
-  4. Rewrites DT_NEEDED / SONAME with patchelf so every name matches the flat
-     `lib*.so` pattern Android's package manager extracts, and sets RUNPATH to
-     `$ORIGIN` (the app also sets LD_LIBRARY_PATH=nativeLibraryDir).
+     shared library they (transitively) need as `lib<stem>_tx.so` -- BYTE FOR
+     BYTE. Nothing is patched.
+  4. Writes a manifest whose "sonames" map gives, for every DT_NEEDED soname
+     (libz.so.1, libc++_shared.so, ...), the flat file that provides it. At
+     runtime the app creates `filesDir/termux-lib/<soname>` symlinks into
+     nativeLibraryDir and puts that directory first on LD_LIBRARY_PATH.
 
-Usage: fetch_termux.py <out_jnilibs_dir> [--packages nodejs-lts,bash]
-Writes <out>/termux-manifest.json describing what was packaged.
-Requires `patchelf` on PATH.
+Why no patchelf: patchelf (0.18, Ubuntu 24.04) rewrites these 16 KiB-aligned
+Termux ELFs into files whose .dynstr/.dynsym file offsets no longer match the
+PT_LOAD that maps them; Bionic's linker then reads garbage and segfaults in
+soinfo::set_dt_runpath (seen on the x86_64 emulator, exit 139). Unmodified
+ELFs plus soname symlinks avoid the whole class of bugs.
+
+Usage: fetch_termux.py <out_jnilibs_dir> [--packages nodejs-lts,bash] [--manifest f.json]
 """
-import argparse, io, json, lzma, os, re, shutil, subprocess, sys, tarfile, tempfile, urllib.request
+import argparse, io, json, lzma, os, re, shutil, struct, subprocess, sys, tarfile, tempfile, urllib.request
 
 REPO = os.environ.get("TERMUX_REPO", "https://packages-cf.termux.dev/apt/termux-main")
 ARCH = os.environ.get("TERMUX_ARCH", "aarch64")
@@ -111,12 +117,51 @@ def extract_deb(data, dest):
     raise RuntimeError("no data.tar in deb")
 
 
-def patchelf(*args):
-    return subprocess.run(["patchelf", *args], check=True, stdout=subprocess.PIPE, text=True).stdout
+def elf_dynamic(path):
+    """Return (needed list, soname or None) of an ELF64 little-endian file,
+    read straight from PT_DYNAMIC (no external tools)."""
+    with open(path, "rb") as f:
+        data = f.read()
+    if data[:4] != b"\x7fELF" or data[4] != 2 or data[5] != 1:
+        raise ValueError(f"{path}: not an ELF64 LE file")
+    phoff, = struct.unpack_from("<Q", data, 0x20)
+    phentsize, phnum = struct.unpack_from("<HH", data, 0x36)
+    loads, dyn = [], None
+    for i in range(phnum):
+        p_type, _fl, off, va, _pa, filesz, memsz, _al = struct.unpack_from("<IIQQQQQQ", data, phoff + i * phentsize)
+        if p_type == 1:
+            loads.append((va, off, filesz))
+        elif p_type == 2:
+            dyn = (off, filesz)
+    if dyn is None:
+        return [], None
+
+    def v2o(va):
+        for lva, loff, lsz in loads:
+            if lva <= va < lva + lsz:
+                return va - lva + loff
+        raise ValueError(f"{path}: vaddr {va:#x} not file-backed")
+
+    entries, strtab = [], None
+    for o in range(dyn[0], dyn[0] + dyn[1], 16):
+        tag, val = struct.unpack_from("<qQ", data, o)
+        if tag == 0:
+            break
+        if tag == 5:
+            strtab = v2o(val)
+        entries.append((tag, val))
+
+    def cstr(idx):
+        start = strtab + idx
+        return data[start:data.index(b"\0", start)].decode()
+
+    needed = [cstr(v) for t, v in entries if t == 1]
+    soname = next((cstr(v) for t, v in entries if t == 14), None)
+    return needed, soname
 
 
 def needed(path):
-    return [x for x in patchelf("--print-needed", path).split() if x]
+    return elf_dynamic(path)[0]
 
 
 def flat_name(soname):
@@ -153,22 +198,19 @@ def main():
         if ".so" in fn and os.path.isfile(full):
             available[fn] = os.path.realpath(full)
     os.makedirs(a.out, exist_ok=True)
-    manifest = {"packages": {p: index[p]["Version"] for p in pkgs}, "executables": {}, "libs": []}
+    manifest = {"packages": {p: index[p]["Version"] for p in pkgs}, "executables": {}, "libs": [], "sonames": {}}
     queue, done = [], set()
 
     def stage(src, dst_name):
         dst = os.path.join(a.out, dst_name)
-        shutil.copyfile(src, dst)
+        shutil.copyfile(src, dst)  # unmodified: see module docstring
         os.chmod(dst, 0o755)
         for n in needed(dst):
             if n in SYSTEM_LIBS:
                 continue
-            flat = flat_name(n)
-            patchelf("--replace-needed", n, flat, dst)
             if n not in done:
                 done.add(n)
                 queue.append(n)
-        patchelf("--set-rpath", "$ORIGIN", dst)
         return dst
 
     for p in roots:
@@ -184,8 +226,11 @@ def main():
             raise SystemExit(f"missing dependency {n} (not in packaged debs)")
         flat = flat_name(n)
         dst = stage(available[n], flat)
-        patchelf("--set-soname", flat, dst)
         manifest["libs"].append(flat)
+        manifest["sonames"][n] = flat
+        own = elf_dynamic(dst)[1]
+        if own and own != n:
+            manifest["sonames"][own] = flat
     manifest["libs"].sort()
     with open(a.manifest or os.path.join(os.path.dirname(os.path.abspath(a.out)), "termux-manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)

@@ -19,28 +19,28 @@ adb install -r -g "$APK" || { echo "FAIL: install"; exit 1; }
 adb logcat -c
 adb shell am start -W -n "$PKG/.MainActivity"
 
-# 1. nativeLibraryDir executables actually run (as the app uid, via run-as).
-# The app dir contains '==' segments, so cut at the FIRST '=' only.
-NLD=$(adb shell dumpsys package "$PKG" | grep -m1 legacyNativeLibraryDir | sed 's/^[^=]*=//' | tr -d '\r')
-ABI=$(adb shell getprop ro.product.cpu.abi | tr -d '\r')
-case "$ABI" in arm64-v8a) SUB=arm64 ;; x86_64) SUB=x86_64 ;; *) SUB=$ABI ;; esac
-LIBDIR="$NLD/$SUB"
-echo "nativeLibraryDir=$LIBDIR" | tee -a "$LOGS/abi.txt"
-adb shell run-as "$PKG" ls -la "$LIBDIR" | tee "$LOGS/nativelibs.txt"
-adb shell run-as "$PKG" env LD_LIBRARY_PATH="$LIBDIR" "$LIBDIR/libnode_exec.so" -e "'console.log(JSON.stringify({node:process.version,platform:process.platform,arch:process.arch,icu:process.versions.icu,openssl:process.versions.openssl}))'" 2>&1 | tee "$LOGS/node-v.txt"
-adb shell run-as "$PKG" env LD_LIBRARY_PATH="$LIBDIR" "$LIBDIR/libbash_exec.so" -c "'echo bash \$BASH_VERSION'" 2>&1 | tee "$LOGS/bash-v.txt"
-
-# 1b. the same binaries under the shell uid in /data/local/tmp, where a crash
+# 1. the same binaries under the shell uid in /data/local/tmp, where a crash
 # produces a readable tombstone (the app's own crash is silent in logcat).
+# The ELFs are unmodified Termux builds, so give them their sonames via
+# symlinks exactly as the app does (filesDir/termux-lib).
+ABI=$(adb shell getprop ro.product.cpu.abi | tr -d '\r')
 adb logcat -c -b crash 2>/dev/null || true
-rm -rf "$LOGS/libs" && mkdir -p "$LOGS/libs"
-unzip -o -q "$APK" "lib/$ABI/*" -d "$LOGS/apk"
-adb shell rm -rf /data/local/tmp/pk; adb shell mkdir -p /data/local/tmp/pk
+rm -rf "$LOGS/apk" && mkdir -p "$LOGS/apk"
+unzip -o -q "$APK" "lib/$ABI/*" "assets/termux-manifest-$ABI.json" -d "$LOGS/apk"
+adb shell rm -rf /data/local/tmp/pk; adb shell mkdir -p /data/local/tmp/pk/sl
 adb push "$LOGS/apk/lib/$ABI/." /data/local/tmp/pk > /dev/null
-adb shell chmod 755 /data/local/tmp/pk/'*'
+adb shell chmod 755 /data/local/tmp/pk/'*.so'
+python3 - "$LOGS/apk/assets/termux-manifest-$ABI.json" > "$LOGS/links.sh" <<'PY'
+import json, sys
+for so, flat in json.load(open(sys.argv[1]))["sonames"].items():
+    print(f"ln -sf /data/local/tmp/pk/{flat} '/data/local/tmp/pk/sl/{so}'")
+PY
+adb shell "$(cat "$LOGS/links.sh")"
+adb shell ls -la /data/local/tmp/pk/sl > "$LOGS/links-tmp.txt" 2>&1
+TLD=/data/local/tmp/pk/sl:/data/local/tmp/pk
 echo "--- node from /data/local/tmp (shell uid)" | tee "$LOGS/node-tmp.txt"
-adb shell "cd /data/local/tmp/pk && LD_LIBRARY_PATH=/data/local/tmp/pk ./libnode_exec.so -p 'process.version+\" \"+process.platform+\" \"+process.arch'; echo exit=\$?" 2>&1 | tee -a "$LOGS/node-tmp.txt"
-adb shell "cd /data/local/tmp/pk && LD_LIBRARY_PATH=/data/local/tmp/pk ./libbash_exec.so -c 'echo bash-ok \$BASH_VERSION'; echo exit=\$?" 2>&1 | tee -a "$LOGS/node-tmp.txt"
+adb shell "cd /data/local/tmp/pk && LD_LIBRARY_PATH=$TLD ./libnode_exec.so -p 'process.version+\" \"+process.platform+\" \"+process.arch+\" icu=\"+process.versions.icu+\" openssl=\"+process.versions.openssl'; echo exit=\$?" 2>&1 | tee -a "$LOGS/node-tmp.txt"
+adb shell "cd /data/local/tmp/pk && LD_LIBRARY_PATH=$TLD ./libbash_exec.so -c 'echo bash-ok \$BASH_VERSION'; echo exit=\$?" 2>&1 | tee -a "$LOGS/node-tmp.txt"
 adb logcat -d -b crash > "$LOGS/tombstone.txt" 2>&1
 adb logcat -d -s DEBUG:V linker:V > "$LOGS/linker.txt" 2>&1
 sed -n 1,80p "$LOGS/tombstone.txt"
@@ -58,6 +58,18 @@ adb logcat -d > "$LOGS/logcat-full.txt"
 adb shell run-as "$PKG" cat files/dsh.log > "$LOGS/dsh.log" 2>&1
 adb shell run-as "$PKG" cat files/dsh-home/parakeet.patch.yml > "$LOGS/parakeet.patch.yml" 2>&1
 adb exec-out screencap -p > "$LOGS/screen.png" 2>/dev/null
+
+# 1b. nativeLibraryDir executables as the app uid (run-as), using the soname
+# links the app created. sh -c, not env: the app path contains '=' segments,
+# which env(1) would take for VAR=value assignments.
+NLD=$(adb shell dumpsys package "$PKG" | grep -m1 legacyNativeLibraryDir | sed 's/^[^=]*=//' | tr -d '\r')
+case "$ABI" in arm64-v8a) SUB=arm64 ;; *) SUB=$ABI ;; esac
+LIBDIR="$NLD/$SUB"
+APPLD="/data/data/$PKG/files/termux-lib:$LIBDIR"
+echo "nativeLibraryDir=$LIBDIR" | tee -a "$LOGS/abi.txt"
+adb shell run-as "$PKG" ls -la "$LIBDIR" files/termux-lib > "$LOGS/nativelibs.txt" 2>&1
+adb shell "run-as $PKG sh -c 'LD_LIBRARY_PATH=$APPLD $LIBDIR/libnode_exec.so -e \"console.log(JSON.stringify({node:process.version,arch:process.arch}))\"'" 2>&1 | tee "$LOGS/node-v.txt"
+adb shell "run-as $PKG sh -c 'LD_LIBRARY_PATH=$APPLD $LIBDIR/libbash_exec.so -c \"echo bash \\\$BASH_VERSION\"'" 2>&1 | tee "$LOGS/bash-v.txt"
 tail -60 "$LOGS/logcat-parakeet.txt"
 
 if grep -q '"node":"v24' "$LOGS/node-v.txt"; then echo "PASS: node runs from nativeLibraryDir via run-as: $(cat "$LOGS/node-v.txt")"

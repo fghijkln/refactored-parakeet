@@ -80,6 +80,7 @@ class DshService : Service() {
             }
             Runtime.ensureRuntime(this)
             Runtime.ensureShims(this)
+            Runtime.ensureLibLinks(this)
             val store = SecretStore(this)
             val cfg = store.load()
             Runtime.writeConfig(this, cfg)
