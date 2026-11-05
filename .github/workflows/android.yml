@@ -1,0 +1,182 @@
+name: android
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "24"
+  GRADLE_VERSION: "8.11.1"
+
+jobs:
+  runtime:
+    name: DSH runtime + Termux node (build & Linux smoke test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq patchelf zip zstd
+
+      - name: Build DSH bundle (assets/dsh-bundle.zip)
+        run: runtime/scripts/build_dsh_bundle.sh "$RUNNER_TEMP/dsh-runtime" "$GITHUB_WORKSPACE/out/assets/dsh-bundle.zip"
+
+      - name: Smoke test the shipped DSH tree on Linux (node ${{ env.NODE_VERSION }})
+        run: runtime/tests/smoke-linux.sh "$RUNNER_TEMP/dsh-runtime"
+
+      - name: Repackage Termux node + bash (arm64-v8a)
+        run: python3 runtime/scripts/fetch_termux.py out/jniLibs/arm64-v8a --manifest out/assets/termux-manifest-arm64-v8a.json
+
+      - name: Repackage Termux node + bash (x86_64, emulator test only)
+        env:
+          TERMUX_ARCH: x86_64
+        run: python3 runtime/scripts/fetch_termux.py out/jniLibs/x86_64 --manifest out/assets/termux-manifest-x86_64.json
+
+      - name: Inspect ELF wiring
+        run: |
+          for abi in arm64-v8a x86_64; do
+            echo "== $abi"; ls -la out/jniLibs/$abi
+            for f in out/jniLibs/$abi/*.so; do echo "$(basename $f): $(patchelf --print-needed $f | tr '\n' ' ')"; done
+          done
+          cat out/assets/termux-manifest-arm64-v8a.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime
+          path: out/
+          retention-days: 7
+
+  apk:
+    name: Gradle unit tests + APK
+    needs: runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime
+          path: out
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Stage runtime into the app
+        run: |
+          mkdir -p app/src/main/assets app/src/main/jniLibs
+          cp out/assets/dsh-bundle.zip app/src/main/assets/
+          cp out/assets/termux-manifest-*.json app/src/main/assets/
+          cp -r out/jniLibs/arm64-v8a out/jniLibs/x86_64 app/src/main/jniLibs/
+
+      - name: Unit tests
+        run: gradle --no-daemon :app:testDebugUnitTest
+
+      - name: APK (arm64-v8a, the product)
+        run: |
+          gradle --no-daemon :app:assembleDebug -Pparakeet.abis=arm64-v8a
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk dist/parakeet-agent-v0.1.0-arm64-v8a.apk
+
+      - name: APK (arm64-v8a + x86_64, for emulators)
+        run: |
+          gradle --no-daemon :app:assembleDebug -Pparakeet.abis=arm64-v8a,x86_64
+          cp app/build/outputs/apk/debug/app-debug.apk dist/parakeet-agent-v0.1.0-universal.apk
+          ls -la dist
+          unzip -l dist/parakeet-agent-v0.1.0-arm64-v8a.apk | grep -E 'lib/|assets/' | head -40
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parakeet-apk
+          path: dist/*.apk
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-reports
+          path: app/build/reports/tests/
+          retention-days: 7
+
+  emulator:
+    name: Android emulator smoke test (x86_64)
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: parakeet-apk
+          path: dist
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Boot emulator, install, start the agent runtime
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: default
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -memory 4096
+          script: bash runtime/tests/emulator-smoke.sh dist/parakeet-agent-v0.1.0-universal.apk emulator-logs
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emulator-logs
+          path: emulator-logs/
+          retention-days: 14
+
+  release:
+    name: GitHub Release v0.1.0
+    needs: [apk, emulator]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: parakeet-apk
+          path: dist
+
+      - name: Publish / update release v0.1.0
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.0
+          target_commitish: ${{ github.sha }}
+          name: Parakeet Agent v0.1.0
+          prerelease: true
+          files: dist/*.apk
+          body: |
+            Android agent app: DeepSeek Harness on an embedded Node 24 (Termux build, Bionic), KernelSU root shell tool, any-vendor model provider.
+
+            * `parakeet-agent-v0.1.0-arm64-v8a.apk` — for phones (arm64).
+            * `parakeet-agent-v0.1.0-universal.apk` — arm64 + x86_64 (emulators).
+
+            Debug/self-signed build from commit ${{ github.sha }}. Verified in CI: Linux smoke test of the shipped DSH tree, unit tests, and an x86_64 Android emulator boot of the runtime. NOT verified on a real KernelSU device — see README.

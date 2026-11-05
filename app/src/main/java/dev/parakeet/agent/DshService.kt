@@ -84,8 +84,15 @@ class DshService : Service() {
             val cfg = store.load()
             Runtime.writeConfig(this, cfg)
 
-            val port = freePort()
             val env = Runtime.env(this, store.apiKey())
+            // Fail fast, with a readable reason, if node cannot even start.
+            val self = Su.runProcess(Runtime.selfTestArgv(this), 60_000, env)
+            Log.i(Runtime.TAG, "parakeet selftest: ${self.stdout.trim()} ${self.stderr.trim()}".trim())
+            if (self.exitCode != 0) {
+                fail("Node self-test failed (exit ${self.exitCode}): ${self.stderr.ifBlank { self.stdout }.take(500)}")
+                return
+            }
+            val port = freePort()
             val pb = ProcessBuilder(Runtime.webArgv(this, port))
                 .directory(Runtime.workspaceDir(this))
                 .redirectErrorStream(true)

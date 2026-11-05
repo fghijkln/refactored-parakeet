@@ -53,7 +53,11 @@ android {
     packaging {
         // node/bash are shipped as lib*.so and exec'd from nativeLibraryDir;
         // they must be extracted to disk, not mapped from the APK.
-        jniLibs { useLegacyPackaging = true }
+        jniLibs {
+            useLegacyPackaging = true
+            // Never strip: these are prebuilt, patchelf-edited Termux ELFs.
+            keepDebugSymbols += "**/*.so"
+        }
     }
 
     androidResources {
