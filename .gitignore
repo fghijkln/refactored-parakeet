@@ -1,0 +1,10 @@
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+app/src/main/jniLibs/
+app/src/main/assets/dsh-bundle.zip
+app/src/main/assets/termux-manifest.json
+runtime/out/
+node_modules/
