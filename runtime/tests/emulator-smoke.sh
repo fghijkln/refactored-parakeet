@@ -20,7 +20,8 @@ adb logcat -c
 adb shell am start -W -n "$PKG/.MainActivity"
 
 # 1. nativeLibraryDir executables actually run (as the app uid, via run-as).
-NLD=$(adb shell dumpsys package "$PKG" | grep -m1 legacyNativeLibraryDir | sed 's/.*=//' | tr -d '\r')
+# The app dir contains '==' segments, so cut at the FIRST '=' only.
+NLD=$(adb shell dumpsys package "$PKG" | grep -m1 legacyNativeLibraryDir | sed 's/^[^=]*=//' | tr -d '\r')
 ABI=$(adb shell getprop ro.product.cpu.abi | tr -d '\r')
 case "$ABI" in arm64-v8a) SUB=arm64 ;; x86_64) SUB=x86_64 ;; *) SUB=$ABI ;; esac
 LIBDIR="$NLD/$SUB"
@@ -28,6 +29,22 @@ echo "nativeLibraryDir=$LIBDIR" | tee -a "$LOGS/abi.txt"
 adb shell run-as "$PKG" ls -la "$LIBDIR" | tee "$LOGS/nativelibs.txt"
 adb shell run-as "$PKG" env LD_LIBRARY_PATH="$LIBDIR" "$LIBDIR/libnode_exec.so" -e "'console.log(JSON.stringify({node:process.version,platform:process.platform,arch:process.arch,icu:process.versions.icu,openssl:process.versions.openssl}))'" 2>&1 | tee "$LOGS/node-v.txt"
 adb shell run-as "$PKG" env LD_LIBRARY_PATH="$LIBDIR" "$LIBDIR/libbash_exec.so" -c "'echo bash \$BASH_VERSION'" 2>&1 | tee "$LOGS/bash-v.txt"
+
+# 1b. the same binaries under the shell uid in /data/local/tmp, where a crash
+# produces a readable tombstone (the app's own crash is silent in logcat).
+adb logcat -c -b crash 2>/dev/null || true
+rm -rf "$LOGS/libs" && mkdir -p "$LOGS/libs"
+unzip -o -q "$APK" "lib/$ABI/*" -d "$LOGS/apk"
+adb shell rm -rf /data/local/tmp/pk; adb shell mkdir -p /data/local/tmp/pk
+adb push "$LOGS/apk/lib/$ABI/." /data/local/tmp/pk > /dev/null
+adb shell chmod 755 /data/local/tmp/pk/'*'
+echo "--- node from /data/local/tmp (shell uid)" | tee "$LOGS/node-tmp.txt"
+adb shell "cd /data/local/tmp/pk && LD_LIBRARY_PATH=/data/local/tmp/pk ./libnode_exec.so -p 'process.version+\" \"+process.platform+\" \"+process.arch'; echo exit=\$?" 2>&1 | tee -a "$LOGS/node-tmp.txt"
+adb shell "cd /data/local/tmp/pk && LD_LIBRARY_PATH=/data/local/tmp/pk ./libbash_exec.so -c 'echo bash-ok \$BASH_VERSION'; echo exit=\$?" 2>&1 | tee -a "$LOGS/node-tmp.txt"
+adb logcat -d -b crash > "$LOGS/tombstone.txt" 2>&1
+adb logcat -d -s DEBUG:V linker:V > "$LOGS/linker.txt" 2>&1
+sed -n 1,80p "$LOGS/tombstone.txt"
+sed -n 1,40p "$LOGS/linker.txt"
 
 # 2. the app boots DSH (first launch unzips the runtime; allow a few minutes).
 OK=""
