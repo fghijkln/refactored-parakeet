@@ -50,3 +50,37 @@ ${anchor}
 } else {
   console.log('already patched', flock);
 }
+
+/*
+ * 2. node-addon-require-builtin: a Node-API addon whose only job is
+ *    `requireBuiltin(id)` = Node's internal require (DSH's profile resolver and
+ *    plugin loader hook Node's ESM/CJS loaders through it). Its prebuilds are
+ *    glibc/musl/darwin only. Node ships the same capability behind the
+ *    `--expose-internals` flag, which DSH's loader already tries first, so the
+ *    entry is replaced by a pure-JS equivalent and the launcher guarantees the
+ *    flag (see dsh/launcher/launch.mjs).
+ */
+const rb = join(root, 'node_modules/node-addon-require-builtin/lib/index.js');
+if (!existsSync(rb)) throw new Error(`missing ${rb}`);
+writeFileSync(
+  rb,
+  `"use strict";
+/* parakeet: pure-JS replacement for the native require-builtin addon (requires node --expose-internals) */
+Object.defineProperty(exports, "__esModule", { value: true });
+const { createRequire } = require("node:module");
+const internalRequire = createRequire(__filename);
+function requireBuiltin(moduleId) {
+    if (!process.execArgv.includes("--expose-internals")) {
+        throw new Error("node-addon-require-builtin (parakeet shim): start node with --expose-internals");
+    }
+    return internalRequire(moduleId);
+}
+function isAllowedInternalId() { return true; }
+function getBindingInfo() { return { source: "parakeet-js-shim", flag: "--expose-internals" }; }
+exports.requireBuiltin = requireBuiltin;
+exports.isAllowedInternalId = isAllowedInternalId;
+exports.getBindingInfo = getBindingInfo;
+exports.default = { requireBuiltin, isAllowedInternalId, getBindingInfo };
+`,
+);
+console.log('replaced', rb);

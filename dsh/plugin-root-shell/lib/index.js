@@ -97,6 +97,7 @@ export async function apply(ctx, config) {
       output: {
         schema: {
           type: 'object',
+          additionalProperties: false,
           properties: {
             available: { type: 'boolean', required: true },
             kernelSu: { type: 'boolean', required: true },
@@ -138,6 +139,7 @@ export async function apply(ctx, config) {
       output: {
         schema: {
           type: 'object',
+          additionalProperties: false,
           properties: {
             output: { type: 'string', required: true },
             exitCode: { type: 'integer' },

@@ -22,7 +22,6 @@ PNPM_VERSION=$(node -p "require('$ROOT/dsh/versions.json').pnpm")
 rm -rf "$WORK"
 mkdir -p "$WORK"
 cp "$ROOT"/dsh/launcher/*.mjs "$WORK/"
-cp -r "$ROOT/dsh/plugin-root-shell" "$WORK/plugin-root-shell"
 cat > "$WORK/package.json" <<EOF
 {
   "name": "parakeet-dsh-runtime",
@@ -30,8 +29,7 @@ cat > "$WORK/package.json" <<EOF
   "type": "module",
   "dependencies": {
     "@deepseek-ai/dsh": "$DSH_VERSION",
-    "pnpm": "$PNPM_VERSION",
-    "@parakeet/dsh-plugin-root-shell": "file:./plugin-root-shell"
+    "pnpm": "$PNPM_VERSION"
   },
   "overrides": {
     "zod": "$(node -p "require('$ROOT/dsh/versions.json').zod")"
@@ -40,10 +38,12 @@ cat > "$WORK/package.json" <<EOF
 EOF
 cd "$WORK"
 # --ignore-scripts: no native builds (they would target the CI host anyway).
-# --install-links: copy the local plugin instead of symlinking it, so the zip
-# carries real files.
-npm install --omit=dev --ignore-scripts --install-links --no-audit --no-fund --loglevel=error
-rm -rf plugin-root-shell
+npm install --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error
+# The root-shell plugin's imports (@deepseek-ai/schemastery, dsh-tools) are
+# already hoisted by the DSH install, so it is copied in rather than installed.
+mkdir -p node_modules/@parakeet
+cp -r "$ROOT/dsh/plugin-root-shell" node_modules/@parakeet/dsh-plugin-root-shell
+rm -rf node_modules/@parakeet/dsh-plugin-root-shell/test
 
 # ---- prune host-only native code ---------------------------------------
 find node_modules -name '*.node' -type f -print -delete | sed 's/^/pruned addon: /' | sort | uniq | head -50

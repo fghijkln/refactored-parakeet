@@ -32,7 +32,7 @@ const DEFAULT_API = {
  * @param {any} cfg - parsed app config.
  * @returns {object[]} the DSH patch list.
  */
-export function buildPatch(cfg = {}) {
+export function buildPatch(cfg = {}, opts = {}) {
   const patch = [];
   const workspaceRoot = typeof cfg.workspaceRoot === 'string' && cfg.workspaceRoot ? cfg.workspaceRoot : process.cwd();
 
@@ -69,7 +69,9 @@ export function buildPatch(cfg = {}) {
       insert: [
         {
           id: 'parakeet-root-shell',
-          name: '@parakeet/dsh-plugin-root-shell',
+          // Absolute entry path: profiles resolve plugin names from their own
+          // directory, which does not contain the runtime's node_modules.
+          name: opts.rootPluginEntry ?? '@parakeet/dsh-plugin-root-shell',
           config: { requireConfirm: true, persistent: true },
         },
       ],

@@ -149,6 +149,7 @@ object Runtime {
     /** Build the argv that boots the DSH web server on loopback. */
     fun webArgv(ctx: Context, port: Int): List<String> = listOf(
         nodeBinary(ctx).absolutePath,
+        "--expose-internals",
         launcher(ctx).absolutePath,
         "web",
         "--no-open",
@@ -159,6 +160,7 @@ object Runtime {
     /** Build the argv for the one-shot self test (`node -v`-class health check). */
     fun selfTestArgv(ctx: Context): List<String> = listOf(
         nodeBinary(ctx).absolutePath,
+        "--expose-internals",
         launcher(ctx).absolutePath,
         "--parakeet-selftest",
     )

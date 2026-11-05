@@ -37,6 +37,10 @@ export const KSU_MARKERS = [
  * @returns {string | undefined} the first existing candidate path.
  */
 export function findSu(exists = existsSync) {
+  // PARAKEET_SU: explicit override, set by the app (unusual su locations) or
+  // by CI (a fake su). Only the app controls the DSH process environment.
+  const override = process.env.PARAKEET_SU;
+  if (override && exists(override)) return override;
   return SU_CANDIDATES.find((p) => exists(p));
 }
 
@@ -195,7 +199,8 @@ export const DANGEROUS_PATTERNS = [
   /\bwipe\b/,
   /\bfastboot\b/,
   /\bformat\s+\/(data|system)\b/,
-  /\brm\s+(-[a-zA-Z]*\s+)*\/(system|vendor|data|dev\/block)(\/|\s|$)/,
+  /\brm\s+(-[a-zA-Z]+\s+)*\/(system|vendor|product|odm|boot|dev\/block)(\/|\s|$)/,
+  /\brm\s+(-[a-zA-Z]+\s+)*\/(data|sdcard|storage\/emulated\/0)\/?(\*|\s|$)/,
   /\bflash_image\b/,
   /\brecovery\s+--wipe_data\b/,
   />\s*\/dev\/block\//,
@@ -266,6 +271,22 @@ export class PersistentSu {
     child.on('error', (e) => onGone(String(e?.message ?? e)));
     child.on('close', (code, sig) => onGone(`code=${code} signal=${sig}`));
     child.stdin.on('error', () => {});
+    // An idle root shell must never keep DSH alive (headless runs exit when
+    // their turn ends); handles are re-ref'd while a command is in flight.
+    this.setRef(false);
+  }
+
+  setRef(on) {
+    const c = this.child;
+    if (c === undefined) return;
+    for (const h of [c, c.stdin, c.stdout, c.stderr]) {
+      try {
+        if (on) h?.ref?.();
+        else h?.unref?.();
+      } catch {
+        // not every handle type supports ref/unref
+      }
+    }
   }
 
   drain() {
@@ -285,7 +306,8 @@ export class PersistentSu {
     const code = Number.parseInt(after.slice(0, nl).trim(), 10);
     let output = this.buffer.slice(0, idx);
     this.buffer = after.slice(nl + 1);
-    if (output.endsWith('\n')) output = output.slice(0, -1);
+    // Like $(...) in sh: trailing newlines are not part of the answer.
+    output = output.replace(/\n+$/, '');
     let truncated = p.truncated;
     if (output.length > p.maxBytes) {
       output = output.slice(-p.maxBytes);
@@ -339,6 +361,7 @@ export class PersistentSu {
     const line = `( ${cd}eval "$(echo '${b64}' | base64 -d)" ) </dev/null 2>&1; __pk=$?; printf '\\n%s%s\\n' '${marker}' "$__pk"\n`;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
+        this.pending = undefined;
         this.stop();
         reject(new Error(`root command timed out after ${opts.timeoutMs ?? 120_000} ms (session restarted)`));
       }, opts.timeoutMs ?? 120_000);
@@ -346,7 +369,9 @@ export class PersistentSu {
         this.stop();
       };
       opts.signal?.addEventListener('abort', onAbort, { once: true });
+      this.setRef(true);
       const done = (fn) => (v) => {
+        this.setRef(false);
         clearTimeout(timer);
         opts.signal?.removeEventListener('abort', onAbort);
         fn(v);

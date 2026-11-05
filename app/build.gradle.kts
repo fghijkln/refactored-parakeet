@@ -61,6 +61,8 @@ android {
         noCompress += "zip"
     }
 
+    buildFeatures { buildConfig = true }
+
     testOptions { unitTests.isReturnDefaultValues = true }
 }
 
