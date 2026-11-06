@@ -35,13 +35,6 @@ adb shell getprop ro.build.version.sdk | tee -a "$LOGS/abi.txt"
 TX=/data/data/com.termux/files
 adb root > /dev/null 2>&1; sleep 3; adb wait-for-device
 adb shell "id -u" | tr -d '\r' | tee "$LOGS/root.txt"
-adb shell "mkdir -p $TX/usr/etc/tls/certs $TX/usr/lib/ossl-modules $TX/usr/lib/engines-3 $TX/usr/tmp $TX/usr/bin $TX/usr/share/terminfo $TX/home \
-  && printf 'openssl_conf = termux_conf\n[termux_conf]\n' > $TX/usr/etc/tls/openssl.cnf \
-  && echo 'nameserver 8.8.8.8' > $TX/usr/etc/resolv.conf && echo '127.0.0.1 localhost' > $TX/usr/etc/hosts \
-  && echo 'echo TERMUX_PROFILE_READ' > $TX/usr/etc/profile && echo 'echo TERMUX_BASHRC_READ' > $TX/usr/etc/bash.bashrc \
-  && : > $TX/usr/etc/inputrc && : > $TX/usr/etc/tls/cert.pem \
-  && chown -R 10999:10999 /data/data/com.termux && chmod -R 700 /data/data/com.termux && chmod 000 $TX/usr/etc/tls/openssl.cnf" \
-  || fail "fake Termux tree"
 # Android 11+ hides other apps' data dirs from app processes (ENOENT); a phone where the
 # user saw EACCES does not. Read once by system_server at boot: restart the framework.
 old_ss=$(adb shell pidof system_server | tr -d '\r')
@@ -52,6 +45,16 @@ for _ in $(seq 1 120); do
   sleep 2
 done
 echo "system_server $old_ss -> ${ss:-none}, boot_completed=$(adb shell getprop sys.boot_completed | tr -d '\r')" | tee -a "$LOGS/root.txt"
+# After the framework restart: at boot the package manager deletes data dirs of packages
+# that are not installed, which took the first version of this tree with it.
+adb shell "mkdir -p $TX/usr/etc/tls/certs $TX/usr/lib/ossl-modules $TX/usr/lib/engines-3 $TX/usr/tmp $TX/usr/bin $TX/usr/share/terminfo $TX/home \
+  && printf 'openssl_conf = termux_conf\n[termux_conf]\n' > $TX/usr/etc/tls/openssl.cnf \
+  && echo 'nameserver 8.8.8.8' > $TX/usr/etc/resolv.conf && echo '127.0.0.1 localhost' > $TX/usr/etc/hosts \
+  && echo 'echo TERMUX_PROFILE_READ' > $TX/usr/etc/profile && echo 'echo TERMUX_BASHRC_READ' > $TX/usr/etc/bash.bashrc \
+  && : > $TX/usr/etc/inputrc && : > $TX/usr/etc/tls/cert.pem \
+  && chown -R 10999:10999 /data/data/com.termux && chmod -R 700 /data/data/com.termux && chmod 000 $TX/usr/etc/tls/openssl.cnf" \
+  || fail "fake Termux tree"
+adb shell "ls -ldZ /data/data/com.termux $TX/usr/etc/tls/openssl.cnf" >> "$LOGS/root.txt" 2>&1
 adb unroot > /dev/null 2>&1; sleep 3; adb wait-for-device
 adb shell "id -u; cat $TX/usr/etc/tls/openssl.cnf" > "$LOGS/termux-eacces.txt" 2>&1
 grep -q "Permission denied" "$LOGS/termux-eacces.txt" && pass "fake Termux tree is EACCES to the shell uid" \
