@@ -127,7 +127,8 @@ void main() {
       );
       for (final s in shortcuts) {
         expect(attr(s, 'targetPackage'), applicationId);
-        expect(attr(s, 'targetClass'), '$applicationId.shortcuts.EntryActivity');
+        // Parakeet: the class keeps upstream's Kotlin namespace; only the applicationId changed.
+        expect(attr(s, 'targetClass'), 'io.github.ccch1mneyyy.dsh_app.shortcuts.EntryActivity');
       }
     });
   });

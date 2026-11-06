@@ -1,0 +1,118 @@
+# Parakeet: dsh-Go tests not run in this repo, each with its reason.
+# Read by tooling/parakeet_test_filter.py (CI 'Flutter' job).
+#   [reason]                 applies to the entries below it
+#   test/dir/  test/x_test.dart   the whole directory / file is not run
+#   test/x_test.dart: full name   that one test is not run (exact full test name)
+
+[Update checks removed (Parakeet has no update server).]
+test/update/
+
+[Anonymous usage statistics removed (no telemetry).]
+test/usage/
+
+[Star prompt removed.]
+test/star/
+
+[Forum and community (upstream servers, QQ group) removed.]
+test/forum/
+test/community/
+
+[DeepSeek account sign-in removed (the app uses its own API key).]
+test/account/
+
+[Share links removed: hosted share pages (share_hosted), the share-link panel page and its upstream viewer (site/share is not imported).]
+test/share_hosted/
+test/share_code/replay_viewer_sync_test.dart
+test/share/share_entries_test.dart: a reply in a replay shares from the replay: its card, its file, its pictures
+test/share/share_entries_test.dart: the key under a reply: beside 复制, the same size; the panel at this reply
+test/share/share_panel_test.dart: 1.3× text at 320 wide: every page fits, no label cut
+test/share/share_panel_test.dart: 1.3× text at 390 wide: every page fits, no label cut
+test/share/share_panel_test.dart: 2.0× text at 320 wide: every page fits, no label cut
+test/share/share_panel_test.dart: [link-undo] restored bytes do not acquire the new privacy selection
+test/share/share_panel_test.dart: [link-undo] restoring a month link does not make it permanent
+test/share/share_panel_test.dart: [link-undo] restoring unchanged settings keeps the original link
+test/share/share_panel_test.dart: a failed upload says so; without a share host there is no 链接
+test/share/share_panel_test.dart: a new scope or privacy asks for a new link; the old one stays in 我的分享链接
+test/share/share_panel_test.dart: golden: the first page (dark)
+test/share/share_panel_test.dart: golden: the first page (en)
+test/share/share_panel_test.dart: golden: the first page (light)
+test/share/share_panel_test.dart: golden: 链接 before and after it is made
+test/share/share_panel_test.dart: no close key anywhere: the panel and its pages drag down to close
+test/share/share_panel_test.dart: over the limit: the file and the link say so and nothing goes out; Markdown still does
+test/share/share_panel_test.dart: privacy reaches the file, the link and the text alike
+test/share/share_panel_test.dart: the destinations: equal cells, 52 keys, mirrored edges, labels under their keys
+test/share/share_panel_test.dart: 文件 and 链接 buttons: equal halves 12 apart on the 20 gutter; the make button full width
+test/share/share_panel_test.dart: 链接: 30 天 by default, the reply uploaded, copy / QR / share, stop and undo
+
+[Plugin links (upstream share server) removed.]
+test/links/plugin_links_test.dart
+
+[Official plugin-market endpoints point at parakeet.invalid; these tests assert upstream's dl.dshtui.com bucket/Worker.]
+test/plugins/market_official_cache_test.dart
+
+[The /feedback slash command is removed (feedback removed).]
+test/chat/usage_commands_test.dart: slash commands catalog: Chinese faces by definitionId, Web-only /export hidden
+test/chat/usage_commands_test.dart: slash commands palette order: app commands, first-party, then the rest
+
+[Forum / community entry removed from 全部功能, ui.json targets and the link index.]
+test/features/feature_logic_test.dart: feature catalog official surfaces named in the parity table are all present
+test/features/reach_catalog_test.dart: 论坛有原生入口，文件标题一致，搜索使用返回结果的 action
+test/links/page_links_test.dart: every link id resolves: settings through the index, the rest through 全部功能
+test/settings/index/open_target_test.dart: every ui.json target is a 全部功能 card or a settings link
+test/ui_config/schema_sync_test.dart: every open target is a feature-catalog id, a settings page link, new-chat or settings
+
+[DeepSeek account sign-in removed from onboarding and the settings overview.]
+test/onboarding/parallel_setup_geometry_test.dart: 320 dp, large text: nothing overflows or is cut sign-in waits (en, ×1.3)
+test/onboarding/parallel_setup_geometry_test.dart: 320 dp, large text: nothing overflows or is cut sign-in waits (en, ×2.0)
+test/onboarding/parallel_setup_geometry_test.dart: 320 dp, large text: nothing overflows or is cut sign-in waits (zh, ×1.3)
+test/onboarding/parallel_setup_geometry_test.dart: 320 dp, large text: nothing overflows or is cut sign-in waits (zh, ×2.0)
+test/onboarding/parallel_setup_test.dart: signing in while it unpacks a failed unpack drops the wait and shows what to do
+test/onboarding/parallel_setup_test.dart: signing in while it unpacks ready while the app is away: the sign-in opens once the person is back
+test/onboarding/parallel_setup_test.dart: signing in while it unpacks waits for the runtime, then signs in by itself
+test/onboarding/parallel_setup_test.dart: signing in while it unpacks 取消 goes back to the ways in; back does too
+test/onboarding/parallel_setup_test.dart: 本机: set up while it unpacks a key saved before the unpack ends waits for it, then goes home with the engine
+test/settings/settings_overview_remote_test.dart: no runtime, still on 本机: sign-in as before
+test/settings/settings_overview_remote_test.dart: runtime installed, remote host: sign-in as before
+
+[Usage statistics, share links, star and update rows removed from 设置 (about, privacy, the hub, the guide, the search index).]
+test/common/ask_ai_test.dart: 设置 使用帮助 is not there in 网页模式
+test/plugin_config/plugin_config_r7_widgets_test.dart: the settings search finds them by those names, in either language
+test/settings/about_page_test.dart: author profiles fit 360dp at 1.3x in en Brightness.dark
+test/settings/about_page_test.dart: author profiles fit 360dp at 1.3x in en Brightness.light
+test/settings/about_page_test.dart: author profiles fit 360dp at 1.3x in zh_CN Brightness.dark
+test/settings/about_page_test.dart: author profiles fit 360dp at 1.3x in zh_CN Brightness.light
+test/settings/about_page_test.dart: the separate project star still opens the repository
+test/settings/index/guide_nav_test.dart: every 设置 path in the en guide is a way the index knows
+test/settings/index/guide_nav_test.dart: every 设置 path in the zh guide is a way the index knows
+test/settings/index/index_sync_test.dart: 引擎参数 隐私与分享
+test/settings/index/spot_highlight_test.dart: a row link opens the hub near its end
+test/settings/search/settings_search_test.dart: matching 「统计」「隐私」「数据」 and 「analytics」 find 发送匿名使用统计
+
+[Upstream golden no longer matches: the screen lost removed features (sign-in, forum/community, share link, usage stats, star, update) or says Parakeet.]
+test/integration/wiring_test.dart: goldens all features, every group (dark)
+test/integration/wiring_test.dart: goldens all features, every group (light)
+test/landscape/landscape_golden_test.dart: phone_share_panel (light)
+test/onboarding/parallel_setup_golden_test.dart: setup_await_sign_in (dark)
+test/onboarding/parallel_setup_golden_test.dart: setup_await_sign_in (light)
+test/onboarding/parallel_setup_golden_test.dart: setup_connect (dark)
+test/onboarding/parallel_setup_golden_test.dart: setup_connect (light)
+test/plugins/seats/seats_pages_test.dart: goldens settings hub: the plugins' sections under 插件 (dark)
+test/plugins/seats/seats_pages_test.dart: goldens settings hub: the plugins' sections under 插件 (light)
+test/plugins/seats/seats_pages_test.dart: goldens 全部功能: plugin panels in 插件 (dark)
+test/plugins/seats/seats_pages_test.dart: goldens 全部功能: plugin panels in 插件 (light)
+test/settings/settings_ia_golden_test.dart: about (dark)
+test/settings/settings_ia_golden_test.dart: about (light)
+test/settings/settings_ia_golden_test.dart: privacy (dark)
+test/settings/settings_ia_golden_test.dart: privacy (light)
+test/settings/settings_ia_golden_test.dart: settings_hub_full (dark)
+test/settings/settings_ia_golden_test.dart: settings_hub_full (light)
+test/share_code/share_code_golden_test.dart: share_plugin_qr (dark)
+test/share_code/share_code_golden_test.dart: share_plugin_qr (light)
+test/shell/shell_golden_test.dart: settings_appearance (dark)
+test/shell/shell_golden_test.dart: settings_appearance (light)
+test/shell/shell_golden_test.dart: settings_appearance_large_text (dark)
+test/shell/shell_golden_test.dart: settings_appearance_large_text (light)
+test/shell/shell_golden_test.dart: settings_bottom (dark)
+test/shell/shell_golden_test.dart: settings_bottom (light)
+test/shell/shell_golden_test.dart: welcome (dark)
+test/shell/shell_golden_test.dart: welcome (light)

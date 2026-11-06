@@ -12,3 +12,6 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+# Parakeet: the self-signed key every Parakeet build is signed with (0.1.x too), committed on
+# purpose so updates install over each other. It protects nothing.
+!app/parakeet-release.keystore

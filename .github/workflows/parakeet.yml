@@ -141,8 +141,12 @@ jobs:
           flutter analyze --no-pub
           python3 tool/l10n_merge.py
           git diff --exit-code -- lib/l10n
-      - name: Test every third file
-        run: flutter test --no-pub --concurrency=4 --reporter github $(find test -name '*_test.dart' | sort | awk 'NR % 3 == ${{ matrix.shard }}')
+      - name: Test every third file (less the removed features' tests, tooling/parakeet-test-skips.txt)
+        run: |
+          python3 ../tooling/parakeet_test_filter.py report
+          mapfile -t files < <(python3 ../tooling/parakeet_test_filter.py files ${{ matrix.shard }})
+          echo "${#files[@]} test files in shard ${{ matrix.shard }}"
+          flutter test --no-pub --concurrency=4 --reporter github --name "$(python3 ../tooling/parakeet_test_filter.py name)" "${files[@]}"
       - name: Keep golden diffs
         if: failure()
         uses: actions/upload-artifact@v4
