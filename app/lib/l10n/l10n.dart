@@ -34,7 +34,11 @@ abstract final class AppLocale {
   /// The locale in use (zh_CN until the app resolves one; tests keep it).
   static Locale get current => _locale;
 
-  static bool get isEnglish => _locale.languageCode == 'en';
+  /// Constant in a single-language APK, so the AOT compiler drops the other
+  /// language's branches (and their string literals) from libapp.so.
+  static const bool _buildIsEnglish = parakeetLocale == 'en';
+
+  static bool get isEnglish => parakeetLocaleFixed ? _buildIsEnglish : _locale.languageCode == 'en';
 
   static L10n get l10n => _l10n;
 

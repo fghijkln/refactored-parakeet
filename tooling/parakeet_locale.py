@@ -274,6 +274,52 @@ def scrub_code_assets(assets):
                     print("code asset scrubbed: %s" % os.path.relpath(p, ROOT))
 
 
+def scrub_replay_viewer():
+    """The exported conversation page (app/lib/share_code/replay_viewer.g.dart) carries the
+    viewer's zh and en tables and picks one from the browser: one language here, its
+    inline script's CSP hash recomputed."""
+    import base64
+    import hashlib
+    p = os.path.join(ROOT, "app/lib/share_code/replay_viewer.g.dart")
+    if not os.path.isfile(p):
+        return
+    text = open(p, encoding="utf-8").read()
+    other = "en" if LANG == "zh" else "zh"
+    start = text.index("var I18N = {") + len("var I18N = ")
+    depth, i = 0, start
+    while True:
+        c = text[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        elif c == '"':
+            i += 1
+            while text[i] != '"':
+                i += 2 if text[i] == "\\" else 1
+        i += 1
+    table = json.loads(text[start:i + 1])
+    table[other] = table[LANG]
+    body = json.dumps(table, ensure_ascii=False, indent=2).replace("\n", "\n  ")
+    text = text[:start] + body + text[i + 1:]
+    text, n = re.subn(r"(?m)^(\s*)var lang = [^\n]*browserLanguage[^\n]*;$", lambda m: "%svar lang = '%s';" % (m.group(1), LANG), text)
+    assert n == 1, "replay viewer: lang line not found"
+    if LANG == "en":
+        text = text.replace('<html lang="zh-CN">', '<html lang="en">')
+        text = re.sub(r"(?m)^[ \t]*//[^\n]*[\u4e00-\u9fff][^\n]*\n", "", text)
+        text = re.sub(r"/\*[\s\S]*?\*/", lambda m: "" if CJK.search(m.group(0)) else m.group(0), text)
+    # CSP: sha256 of the one executable inline script.
+    scripts = re.findall(r"<script>([\s\S]*?)</script>", text)
+    assert len(scripts) == 1, "replay viewer: expected one inline script, found %d" % len(scripts)
+    digest = base64.b64encode(hashlib.sha256(scripts[0].encode("utf-8")).digest()).decode()
+    text, n = re.subn(r"script-src 'sha256-[A-Za-z0-9+/=]+'", "script-src 'sha256-%s'" % digest, text)
+    assert n == 1, "replay viewer: CSP script hash not found"
+    open(p, "w", encoding="utf-8").write(text)
+    print("replay viewer: %s only, CSP hash sha256-%s" % (LANG, digest))
+
+
 def scrub_assets():
     assets = os.path.join(ROOT, "app/assets")
     other = "en" if LANG == "zh" else "zh"
@@ -359,5 +405,6 @@ if __name__ == "__main__":
     ROOT, LANG = sys.argv[1], sys.argv[2]
     assert LANG in ("zh", "en")
     scrub_assets()  # before blank_arb: reads the unblanked ARB files
+    scrub_replay_viewer()
     blank_arb(os.path.join(ROOT, "app/lib/l10n/app_%s.arb" % LANG))
     merge_android(os.path.join(ROOT, "app/android/app/src/main/res"))
