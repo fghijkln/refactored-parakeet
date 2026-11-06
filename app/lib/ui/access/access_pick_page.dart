@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../l10n/l10n.dart';
+import '../../parakeet/host_engine.dart';
 import '../../state/access_state.dart';
 import '../../state/phone_state.dart';
 import '../common/risk_notice.dart';
@@ -119,8 +120,11 @@ class _AccessPickPageState extends ConsumerState<AccessPickPage> {
                 lines: feature == AccessFeature.voice
                     ? [
                         (text: l10n.accessFeatureVoiceNeeds, color: null),
-                        (text: l10n.accessVoiceModel(voiceModelApproxMb), color: null),
-                        if (metered) (text: l10n.accessVoiceMetered, color: colors.warning),
+                        // Parakeet: no model download on the host engine.
+                        if (!parakeetHostEngine) ...[
+                          (text: l10n.accessVoiceModel(voiceModelApproxMb), color: null),
+                          if (metered) (text: l10n.accessVoiceMetered, color: colors.warning),
+                        ],
                       ]
                     : const [],
               ),

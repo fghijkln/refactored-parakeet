@@ -22,6 +22,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../parakeet/host_engine.dart';
 import '../pets/overlay_channel.dart';
 import '../pets/pet_prefs.dart';
 import '../runtime/background_net.dart' show backgroundSettingsProvider;
@@ -482,7 +483,8 @@ class AccessSetupController extends Notifier<AccessSetup> {
     await _save();
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(onboardingWantsVoiceKey, features.contains(AccessFeature.voice));
+      // Parakeet: on the host engine voice uses the phone's recognizer; no model to fetch.
+      await prefs.setBool(onboardingWantsVoiceKey, !parakeetHostEngine && features.contains(AccessFeature.voice));
     } catch (_) {}
     if (phoneMode != null && features.contains(AccessFeature.phone)) {
       try {

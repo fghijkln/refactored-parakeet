@@ -4,7 +4,9 @@
   parakeet_locale.py <repo-root> <zh|en>
 
 1. app/lib/l10n/app_<lang>.arb: values of removed features are blanked so their
-   text is not in the APK even where Dart's tree shaker keeps a getter.
+   text is not in the APK even where Dart's tree shaker keeps a getter. For en the
+   template's @metadata (placeholders) is copied in, since app_en.arb becomes the
+   template of the en-only tree.
 2. Android res: for zh, every values-zh/*.xml entry replaces the same-named entry in
    values/*.xml and values-zh is dropped; for en, values-zh is dropped. The APK
    carries one language (localeFilters in build.gradle.kts as well).
@@ -36,6 +38,18 @@ BLANK = re.compile(r"^(?:"
 def blank_arb(path):
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
+    # The template (app_zh.arb) alone carries the @key metadata (placeholders); the en
+    # file becomes the template of an en-only tree, so it takes that metadata along.
+    template = os.path.join(os.path.dirname(path), "app_zh.arb")
+    if LANG != "zh" and os.path.isfile(template):
+        with open(template, encoding="utf-8") as f:
+            zh = json.load(f)
+        copied = 0
+        for key, meta in zh.items():
+            if key.startswith("@") and not key.startswith("@@") and key[1:] in data and key not in data:
+                data[key] = meta
+                copied += 1
+        print("copied %d @metadata entries from the zh template" % copied)
     n = 0
     for key in list(data):
         if key.startswith("@") or not isinstance(data[key], str) or not BLANK.match(key):

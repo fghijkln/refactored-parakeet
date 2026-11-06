@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../l10n/l10n.dart';
+import '../../parakeet/host_engine.dart';
 import '../../state/access_state.dart';
 import '../onboarding/onboarding_scaffold.dart';
 import '../settings/settings_widgets.dart';
@@ -55,7 +56,7 @@ class AccessSummaryPage extends ConsumerWidget {
         SettingsSection(
           key: const ValueKey('access-summary-card'),
           margin: EdgeInsets.zero,
-          footer: voice ? Text(l10n.accessVoiceDownload(voiceModelApproxMb), key: const ValueKey('access-voice')) : null,
+          footer: voice && !parakeetHostEngine ? Text(l10n.accessVoiceDownload(voiceModelApproxMb), key: const ValueKey('access-voice')) : null,
           children: [
             for (final (item, state) in rows)
               AccessItemTile(

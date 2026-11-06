@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../l10n/l10n.dart';
+import '../../parakeet/host_engine.dart';
 import '../../state/adaptive_layout_state.dart';
 import '../../state/agents_state.dart';
 import '../../state/chat_state.dart';
@@ -228,8 +229,15 @@ class _SessionDetailPageState extends ConsumerState<SessionDetailPage> with Tick
               ),
             ),
             const SizedBox(width: 8),
-            // Mirrors the back button: the title stays centred.
-            GlassIconButton(icon: AppIcons.terminal, tooltip: context.l10n.hubTerminal, onPressed: _openTerminal),
+            // Mirrors the back button: the title stays centred. Parakeet: no
+            // terminal on the host engine (no node-pty); the space stays.
+            Visibility(
+              visible: !parakeetHostEngine,
+              maintainSize: true,
+              maintainAnimation: true,
+              maintainState: true,
+              child: GlassIconButton(icon: AppIcons.terminal, tooltip: context.l10n.hubTerminal, onPressed: _openTerminal),
+            ),
           ],
         ),
       ),
@@ -259,8 +267,10 @@ class _SessionDetailPageState extends ConsumerState<SessionDetailPage> with Tick
                 ),
               ),
             ),
-            const SizedBox(width: 8),
-            GlassIconButton(icon: AppIcons.terminal, tooltip: context.l10n.hubTerminal, onPressed: _openTerminal),
+            if (!parakeetHostEngine) ...[
+              const SizedBox(width: 8),
+              GlassIconButton(icon: AppIcons.terminal, tooltip: context.l10n.hubTerminal, onPressed: _openTerminal),
+            ],
             const SizedBox(width: 8),
             const DetailPanelCollapseKey(),
           ],
@@ -427,7 +437,10 @@ class _SessionDetailPageState extends ConsumerState<SessionDetailPage> with Tick
         final drag = DetailSheetScope.maybeOf(context)?.dragArea;
         final titleBar = SheetTitleBar(
           l10n.hubSessionDetails,
-          actions: [SheetIconButton(icon: AppIcons.terminal, tooltip: l10n.hubTerminal, onPressed: _openTerminal)],
+          actions: [
+            if (!parakeetHostEngine)
+              SheetIconButton(icon: AppIcons.terminal, tooltip: l10n.hubTerminal, onPressed: _openTerminal),
+          ],
         );
         return Column(
           children: [

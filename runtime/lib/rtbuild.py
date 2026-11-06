@@ -31,12 +31,17 @@ DSH_GO_BRIDGE = "/opt/dsh-go/dsh-go-bridge"
 # Parakeet: the root_shell/root_status plugin (runtime/plugins/parakeet-root-shell).
 PARAKEET_ROOT_SHELL = "/opt/dsh/node_modules/@parakeet/dsh-plugin-root-shell"  # inside node_modules: its imports resolve
 # Parakeet: DSH rows never mounted in this build (feedback + its session-log
-# upload, DeepSeek account sign-in, product analytics/telemetry). A patch row can
+# upload, DeepSeek account sign-in, product analytics/telemetry, persistent terminals). A patch row can
 # only be disabled; `disabled: true` keeps the plugin, routes and browser half out.
 PARAKEET_DISABLED_ROWS = (
     "message-feedback", "ui-message-feedback", "command-feedback",
     "session-telemetry-otel", "desktop-product-telemetry", "product-analytics",
     "deepseek-account", "llm-deepseek-account", "ui-settings-account", "account-controller",
+    # Host engine: node-pty is not shipped, so the optional persistent-terminal layer
+    # (the agent's terminal_open/send/read/... tools) is never offered. Upstream ships
+    # it switched off; this keeps it off if the bundle is selected. A missing id is
+    # only a warning in DSH's patch composer.
+    "optional-persistent-terminals",
 )
 # Parakeet host engine: DSH addons that cannot load under Android's Bionic libc
 # (glibc/musl prebuilds) and payloads that only those addons or desktop use.

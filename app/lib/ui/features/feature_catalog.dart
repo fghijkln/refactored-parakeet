@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../l10n/l10n.dart';
+import '../../parakeet/host_engine.dart';
 import '../../plugins/native/native_icons.dart';
 import '../../plugins/native/native_state.dart';
 import '../../plugins/seams/seams.dart';
@@ -212,15 +213,17 @@ final featureSections = <FeatureSection>[
       needsSession: true,
       native: (id) => WorkspaceFilesPage(sessionId: _session(id)),
     ),
-    FeatureItem.localized(
-      id: 'terminal',
-      title: (l10n) => l10n.catalogTerminal,
-      summary: (l10n) => l10n.catalogTerminalSummary,
-      icon: AppIcons.terminal,
-      tile: FeatureKind.terminal,
-      needsSession: true,
-      native: (id) => TerminalPage(sessionId: _session(id)),
-    ),
+    // Parakeet: no node-pty on the host engine, so no terminal there.
+    if (!parakeetHostEngine)
+      FeatureItem.localized(
+        id: 'terminal',
+        title: (l10n) => l10n.catalogTerminal,
+        summary: (l10n) => l10n.catalogTerminalSummary,
+        icon: AppIcons.terminal,
+        tile: FeatureKind.terminal,
+        needsSession: true,
+        native: (id) => TerminalPage(sessionId: _session(id)),
+      ),
     FeatureItem.localized(
       id: 'export',
       title: (l10n) => l10n.catalogExport,

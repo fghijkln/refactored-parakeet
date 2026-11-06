@@ -22,6 +22,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../diagnostics/diagnostics_channel.dart';
+import '../parakeet/host_engine.dart';
 import '../share_code/guest_fs.dart';
 import '../voice/voice_model_assets.dart';
 import '../voice/voice_model_download.dart';
@@ -338,8 +339,9 @@ class VoiceModelController extends Notifier<VoiceModelState> {
   Future<void> _load() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      var wanted = prefs.getBool(wantedKey) ?? false;
-      if (prefs.getBool(onboardingKey) == true && prefs.getBool(onboardingHandledKey) != true) {
+      // Parakeet: the host engine has no on-device model; nothing downloads by itself.
+      var wanted = !parakeetHostEngine && (prefs.getBool(wantedKey) ?? false);
+      if (!parakeetHostEngine && prefs.getBool(onboardingKey) == true && prefs.getBool(onboardingHandledKey) != true) {
         // The person chose voice input during setup (the size was shown there).
         await prefs.setBool(onboardingHandledKey, true);
         await prefs.setBool(wantedKey, true);

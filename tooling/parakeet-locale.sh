@@ -10,6 +10,7 @@
 #    regenerates lib/l10n/gen with that one locale.
 #  - Android: res/values holds that language only (values-zh merged into values
 #    for zh, dropped for en); BuildLocale.kt pins native text to it.
+#  - host_engine.dart: parakeetHostEngine = true (no terminal, phone-only voice).
 #  - DSH: runtime/out-<lang> (built by runtime/build-runtime.sh) becomes runtime/out.
 set -euo pipefail
 LANG_ID="${1:?zh or en}"
@@ -31,6 +32,10 @@ fi
 D="$APP/lib/parakeet/build_locale.dart"
 sed -i "s/^const String parakeetTreeLocale = '[a-z]*';/const String parakeetTreeLocale = '$LANG_ID';/" "$D"
 grep -q "parakeetTreeLocale = '$LANG_ID'" "$D"
+
+H="$APP/lib/parakeet/host_engine.dart"
+sed -i "s/^const bool parakeetHostEngine = false;/const bool parakeetHostEngine = true;/" "$H"
+grep -q "parakeetHostEngine = true" "$H"
 
 K="$APP/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/i18n/BuildLocale.kt"
 sed -i "s/const val LOCALE = \"[a-z]*\"/const val LOCALE = \"$LANG_ID\"/" "$K"

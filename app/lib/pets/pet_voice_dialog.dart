@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../l10n/l10n.dart';
+import '../parakeet/host_engine.dart';
 import '../state/connection_state.dart';
 import '../state/voice_settings.dart';
 import '../state/voice_state.dart';
@@ -37,7 +38,8 @@ class _PetVoiceDialogState extends ConsumerState<PetVoiceDialog> with WidgetsBin
             input: _input,
             bridge: ref.read(voiceBridgeProvider),
             client: () => mounted ? ref.read(localConnectionProvider).value?.client : null,
-            mode: () async => VoiceMode.engine,
+            // Parakeet: no on-device model on the host engine; the phone's recognizer.
+            mode: () async => parakeetHostEngine ? VoiceMode.system : VoiceMode.engine,
             requiredProviderId: voiceModelProviderId,
             modelReady: () => true,
             onRecognized: () => scheduleMicrotask(_return),

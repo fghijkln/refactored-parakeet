@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../l10n/l10n.dart';
+import '../../parakeet/host_engine.dart';
 import '../../state/voice_model_state.dart';
 import '../../state/voice_settings.dart';
 import '../common/app_dialog.dart';
@@ -93,7 +94,7 @@ class _VoiceSettingsPageState extends ConsumerState<VoiceSettingsPage> {
     super.initState();
     // What is on disk may have changed since the controller last looked.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(ref.read(voiceModelProvider.notifier).refresh());
+      if (mounted && !parakeetHostEngine) unawaited(ref.read(voiceModelProvider.notifier).refresh());
     });
   }
 
@@ -107,7 +108,7 @@ class _VoiceSettingsPageState extends ConsumerState<VoiceSettingsPage> {
         SettingsSection(
           title: l10n.voiceModeSection,
           children: [
-            for (final mode in VoiceMode.values)
+            for (final mode in availableVoiceModes)
               Semantics(
                 checked: selected == mode,
                 inMutuallyExclusiveGroup: true,
@@ -128,11 +129,13 @@ class _VoiceSettingsPageState extends ConsumerState<VoiceSettingsPage> {
               ),
           ],
         ),
-        SettingsSection(
-          title: l10n.voiceModelSection,
-          footer: Text(l10n.voiceModelFooter),
-          children: const [VoiceModelCard()],
-        ),
+        // Parakeet: no on-device model on the host engine (sherpa-onnx is not shipped).
+        if (!parakeetHostEngine)
+          SettingsSection(
+            title: l10n.voiceModelSection,
+            footer: Text(l10n.voiceModelFooter),
+            children: const [VoiceModelCard()],
+          ),
       ],
     );
   }
