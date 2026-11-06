@@ -51,16 +51,38 @@ ALLOW = [
     ("zh", "removed", re.compile(r"^assets/flutter_assets/assets/engine/auth/bridge\.mjs$"), {"正在准备登录", "正在完成登录"},
      "progress copy of the subscription (ChatGPT / Claude) sign-in bridge, a kept feature; the same words as the "
      "removed DeepSeek account sign-in's ARB strings."),
+    ("zh", "foreign", re.compile(r"^lib/[^/]+/libapp\.so$"), {"Compaction cancelled", "Plan mode entry cancelled"},
+     "DSH engine's own English command output, the keys of the table that translates it "
+     "(app/lib/ui/chat/widgets/command_result_text.dart)."),
+    ("zh", "foreign", re.compile(r"^lib/[^/]+/libapp\.so$"), {"Host is offline", "sign-in expired"},
+     "DSH Remote protocol failure text (packages/dsh_remote); the app shows these failures by code through ARB "
+     "strings (app/lib/remote/relay/dsh_remote_backend.dart)."),
+    ("zh", "foreign", re.compile(r"^lib/[^/]+/libapp\.so$"), {"Unterminated string", "exceeds the limit of", "Invalid format"},
+     "Dart SDK / package messages, not app text: dart:convert's JSON parser ('Unterminated string'), integer "
+     "parsing ('Positive/Negative input exceeds the limit of integer'), a crypto package ('Invalid format')."),
+    ("zh", "foreign", re.compile(r"^classes\d*\.dex$"), {"Failed to start", "Invalid format"},
+     "AndroidX / library messages, not app text ('Failed to start capture request', 'Invalid format for r "
+     "portion of Poly1305 key', ExifInterface)."),
+    ("zh", "foreign", re.compile(r"^classes\d*\.dex$"), {"Developer options"},
+     "a system Settings page title that phone control matches to protect it (phone/a11y/ProtectedPages.kt); "
+     "never shown."),
+    ("zh", "foreign", re.compile(r"^classes\d*\.dex$"), {"Permission denied"},
+     "kernel error text the crash classifier matches in engine logs (runtime/CrashClassifier.kt); never shown."),
 ]
 LANG = None
 
 
 def allowed(check, string, entries):
-    for lang, chk, rx, strings, reason in ALLOW:
-        if lang == LANG and chk == check and entries and all(rx.search(n) for n in entries) \
-                and (strings is None or string in strings):
-            return reason
-    return None
+    """The reason(s) that excuse [string] in every one of its [entries], or None."""
+    reasons = []
+    for n in entries:
+        r = next((reason for lang, chk, rx, strings, reason in ALLOW
+                  if lang == LANG and chk == check and rx.search(n) and (strings is None or string in strings)), None)
+        if r is None:
+            return None
+        if r not in reasons:
+            reasons.append(r)
+    return " + ".join(reasons) if reasons else None
 
 
 def where(s):
@@ -134,7 +156,18 @@ def encodings(s):
 
 
 def present(hay, s):
-    return any(e in hay for e in encodings(s))
+    """[s] is in [hay] (UTF-8 or UTF-16LE). An ASCII string must stand as words of its
+    own: "Connection time" is not found inside "Connection timed out"."""
+    if not s.isascii():
+        return any(e in hay for e in encodings(s))
+    b = s.encode("ascii")
+    if b not in hay and s.encode("utf-16-le") not in hay:
+        return False
+    w8 = rb"(?<![A-Za-z0-9])" + re.escape(b) + rb"(?![A-Za-z0-9])"
+    w16 = rb"(?<![A-Za-z0-9]\x00)" + re.escape(s.encode("utf-16-le")) + rb"(?![A-Za-z0-9]\x00)"
+    if s[:1].isalnum() is False:
+        w8, w16 = re.escape(b) + rb"(?![A-Za-z0-9])", re.escape(s.encode("utf-16-le")) + rb"(?![A-Za-z0-9]\x00)"
+    return re.search(w8, hay) is not None or re.search(w16, hay) is not None
 
 
 def load_arb(d, lang):
