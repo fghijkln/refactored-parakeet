@@ -90,7 +90,12 @@ object HostLaunch {
         }, executable = true)
         write(File(bin, "bash"), "#!$hostShell\nexec ${q(bash)} \"\$@\"\n", true)
         write(File(bin, "sh"), "#!$hostShell\nexec ${q(bash)} --posix \"\$@\"\n", true)
+        // Termux's node/openssl have /data/data/com.termux/files/usr/etc/tls/openssl.cnf compiled in.
+        // With Termux installed that path exists but is unreadable to us (EACCES), which aborts node.
+        val opensslConf = File(owned, "openssl.cnf").path
+        write(File(opensslConf), "openssl_conf = openssl_init\n[openssl_init]\n")
         val nodeScript = "#!$hostShell\nunset DSH_GO_DIRECT_MAIN\n" +
+            "export OPENSSL_CONF=${q(opensslConf)}\n" +
             "if [ -z \"\${HOME:-}\" ]; then export HOME=${q("$rootPath/root")}; fi\n" +
             "if [ -z \"\${TMPDIR:-}\" ]; then export TMPDIR=${q("$rootPath/tmp")}; fi\n" +
             "export DSH_GO_RUNTIME_ROOT=${q(rootPath)} DSH_GO_DIRECT_ROOTFS=${q(rootPath)}\n" +
@@ -128,6 +133,8 @@ object HostLaunch {
             .distinct().joinToString(":")
         env["LD_LIBRARY_PATH"] = "${libLinks.path}:${nativeLibDir.path}"
         env["TZDIR"] = "/system/usr/share/zoneinfo"
+        env["OPENSSL_CONF"] = opensslConf
+        if (env["SSL_CERT_DIR"] == null) env["SSL_CERT_DIR"] = "/system/etc/security/cacerts"
         env["DSH_GO_RUNTIME_ROOT"] = rootPath
         env["DSH_GO_DIRECT_ROOTFS"] = rootPath
         env["DSH_GO_DIRECT_MAIN"] = "1"
