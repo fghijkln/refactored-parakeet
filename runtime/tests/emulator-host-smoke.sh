@@ -30,9 +30,11 @@ ASSETS="$OUT/x86_64/assets/runtime"
 ARCHIVE="$ASSETS/$(python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1]))["rootfs"])' "$ASSETS/manifest.json")"
 adb shell "rm -rf $W && mkdir -p $W/lib $W/links $W/rootfs"
 adb push "$T/apk/lib/x86_64/." "$W/lib/" > /dev/null
-adb push "$ARCHIVE" "$W/rootfs.tar.xz" > /dev/null
+# Android's toybox tar has no xz support: decompress on the host, push a plain tar.
+xz -dc "$ARCHIVE" > "$T/rootfs.tar"
+adb push "$T/rootfs.tar" "$W/rootfs.tar" > /dev/null
 adb push "$ASSETS/termux-manifest.json" "$W/termux-manifest.json" > /dev/null
-adb shell "cd $W/rootfs && tar -xJf ../rootfs.tar.xz" || adb shell "cd $W/rootfs && xz -dc ../rootfs.tar.xz | tar -xf -"
+adb shell "cd $W/rootfs && tar -xf ../rootfs.tar && rm ../rootfs.tar" || fail "rootfs extract on device"
 adb shell "chmod 755 $W/lib/*"
 # soname links (TermuxLibs.kt)
 python3 -I -c '
@@ -115,5 +117,5 @@ if adb shell pidof "$PKG" > /dev/null; then pass "app process alive 25 s after l
 adb shell dumpsys package "$PKG" | grep -E "versionName|flags=" | head -3 | tee "$LOGS/package.txt"
 adb exec-out screencap -p > "$LOGS/screen.png" 2>/dev/null || true
 adb logcat -d > "$LOGS/logcat.txt" 2>&1 || true
-grep -E "FATAL EXCEPTION|AndroidRuntime: " "$LOGS/logcat.txt" | head -20 && fail "crash in logcat" || pass "no FATAL EXCEPTION in logcat"
+grep -E "FATAL EXCEPTION|AndroidRuntime: (FATAL|Process: dev\.parakeet)" "$LOGS/logcat.txt" | head -20 && fail "crash in logcat" || pass "no FATAL EXCEPTION in logcat"
 exit $FAILED
