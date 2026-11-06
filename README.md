@@ -1,342 +1,361 @@
-# Parakeet Agent — DeepSeek Harness on Android, with KernelSU root
+<p align="center">
+  <b>简体中文</b> · <a href="README.en.md">English</a>
+</p>
 
-[中文说明在下方 / Chinese below](#中文说明)
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-zh-dark.webp">
+    <img src="docs/assets/hero-zh-light.webp" alt="DSH Go：把 DeepSeek Harness 装进口袋" width="100%">
+  </picture>
+</p>
 
-Parakeet is an Android app that **is** an AI agent. It runs the real
-[DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) on an
-embedded Node.js 24 directly on the Android host — no container, no proot, no
-chroot, no VM — and gives the agent a **root shell through KernelSU**. Any
-vendor's model works: OpenAI-compatible endpoints, the Anthropic Messages API,
-or DSH's native DeepSeek adapter. DSH plugins install and run unmodified.
+<p align="center">
+  DeepSeek Harness 的 Android 客户端。手机上直接跑，也能遥控你电脑上的 DSH。
+</p>
 
-> ⚠️ **A root agent can brick your device or erase your data.** Read
-> [Security](#security) before granting root.
+<p align="center">
+  <a href="https://github.com/ccch1mneyyy/dsh-go/releases/latest"><img alt="Android 8+" src="https://img.shields.io/badge/Android-8%2B-4B67B4?style=flat-square&logo=android&logoColor=white&labelColor=2B3245"></a>
+  <a href="LICENSE"><img alt="许可证 AGPL-3.0" src="https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF%E8%AF%81-AGPL--3.0-4B67B4?style=flat-square&labelColor=2B3245"></a>
+  <a href="https://forum.dshtui.com"><img alt="论坛" src="https://img.shields.io/badge/%E8%AE%BA%E5%9D%9B-forum.dshtui.com-4B67B4?style=flat-square&labelColor=2B3245"></a>
+  <a href="https://qm.qq.com/q/OEy2RqZnqY"><img alt="QQ 群 1132118290" src="https://img.shields.io/badge/QQ%20%E7%BE%A4-1132118290-4B67B4?style=flat-square&logo=tencentqq&logoColor=white&labelColor=2B3245"></a>
+</p>
 
-## Status — what is verified and what is not
+<p align="center">
+  <a href="https://trendshift.io/repositories/319451"><img src="https://trendshift.io/api/badge/trendshift/repositories/319451/daily" alt="DSH Go：Trendshift 全语言日榜第一（2026-10-30）" width="250" height="55"></a><br>
+  <sub>Trendshift 全语言日榜 #1 · 2026-10-30</sub>
+</p>
 
-| Claim | How it is verified |
-|---|---|
-| The shipped DSH tree (glibc/musl addons removed, JS fallbacks in place) boots `dsh web` and serves the UI | CI, Linux x86_64, Node 24 (`runtime/tests/smoke-linux.sh`) |
-| A full agent turn: provider from app settings → model asks for `root_shell` → command runs through `su` (persistent session) → output returns to the model | CI, Linux, mock OpenAI-compatible server + fake `su` |
-| With "require confirmation" ON and no approval channel, `root_shell` refuses (fails closed) | CI, Linux |
-| Kotlin `su` wrapper, config validation, URL parsing | CI, JVM unit tests (incl. a real process via a fake `su` script) |
-| Termux node/bash exec from `nativeLibraryDir` under Android W^X; `_tx.so` libraries resolve; DSH boots inside the app; web UI answers on 127.0.0.1 | CI, **x86_64 Android emulator (API 30)** using the x86_64 build of the same Termux packages (`runtime/tests/emulator-smoke.sh`) |
-| arm64-v8a build on a real phone | **Not verified** — built and packaged by the same scripts, but never executed here |
-| KernelSU grant flow, `su` as granted app, root commands on a real device | **Not verified** — no KernelSU device is available to CI. The code paths are unit-tested with a fake `su` |
+<br>
 
-See the CI run summary on the [Actions page](../../actions) and the APKs on the
-[v0.1.1 release](../../releases/tag/v0.1.1).
+<h3 align="center">Deepy 和鲸娘，陪你干活</h3>
 
-## Architecture
+<p align="center">干活时敲代码，做完来个空翻，等你确认会举手。打开「App 外显示」，它们还会跟你到桌面。</p>
 
-```
-┌──────────────────────── Android app (Kotlin, dev.parakeet.agent) ───────────────────────┐
-│ MainActivity ── WebView ──► http://127.0.0.1:<port>/?token=…  (DSH web UI)              │
-│   └ root status strip + "Check / request root (KernelSU)" button (Su.probe: su -c id)   │
-│ SettingsActivity ── provider kind / base URL / model / API key / root toggles           │
-│   ├ API key → EncryptedSharedPreferences (Android Keystore AES-256)                    │
-│   └ writes dsh-home/parakeet-config.json (no secrets) + parakeet-settings.json          │
-│ DshService (foreground) ── exec nativeLibraryDir/libnode_exec.so --expose-internals     │
-│        filesDir/dsh/launch.mjs web --host 127.0.0.1 --port N                           │
-│        env: LD_LIBRARY_PATH=nativeLibraryDir, DSH_HOME, PARAKEET_API_KEY, PATH=bin:… │
-└─────────────────────────────────────────────────────────────────────────────────────────┘
-            │
-┌───────────▼──────────── Node 24 (Termux build, Bionic) running real DSH ───────────────┐
-│ launch.mjs: config → --patch overlay (pi-ai provider route, Android sandbox policy,     │
-│             root tool row) ; supplies bundled pnpm to `dsh plugin` / Plugins page        │
-│ @deepseek-ai/dsh 0.2.2-rc.1 (base + web-app bundles, all stock plugins)                  │
-│ @parakeet/dsh-plugin-root-shell (Cordis plugin): tools `root_shell`, `root_status`       │
-│   persistent `su` session, DSH approval gate, always-confirm list for brick-class cmds   │
-│ bash tool → `bash` = symlink to nativeLibraryDir/libbash_exec.so (Termux bash 5.3)       │
-└─────────────────────────────────────────────────────────────────────────────────────────┘
-```
+<p align="center">
+  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/pet-deepy-typing-zh-dark.gif"><img src="docs/assets/pet-deepy-typing-zh-light.gif" width="168" alt="Deepy 敲代码"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/pet-deepy-happy-zh-dark.gif"><img src="docs/assets/pet-deepy-happy-zh-light.gif" width="168" alt="Deepy 完成"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/pet-deepy-notification-zh-dark.gif"><img src="docs/assets/pet-deepy-notification-zh-light.gif" width="168" alt="Deepy 等你确认"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/pet-deepy-sleeping-zh-dark.gif"><img src="docs/assets/pet-deepy-sleeping-zh-light.gif" width="168" alt="Deepy 睡觉"></picture>
+</p>
 
-### Node ≥ 24 on Android (Bionic)
+<p align="center">
+  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/pet-girl-typing-zh-dark.gif"><img src="docs/assets/pet-girl-typing-zh-light.gif" width="168" alt="鲸娘 敲代码"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/pet-girl-happy-zh-dark.gif"><img src="docs/assets/pet-girl-happy-zh-light.gif" width="168" alt="鲸娘 完成"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/pet-girl-notification-zh-dark.gif"><img src="docs/assets/pet-girl-notification-zh-light.gif" width="168" alt="鲸娘 等你确认"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/pet-girl-sleeping-zh-dark.gif"><img src="docs/assets/pet-girl-sleeping-zh-light.gif" width="168" alt="鲸娘 睡觉"></picture>
+</p>
 
-Options considered: (a) repackage Termux's prebuilt `nodejs-lts`, (b) cross-compile
-Node with the NDK in CI, (c) nodejs-mobile. nodejs-mobile is still on Node 18, and a
-Node 24 NDK cross-build is a 1–2 h CI job with its own patch set. **(a) was chosen**:
-Termux maintains Node for Bionic continuously.
+<br>
 
-`runtime/scripts/fetch_termux.py` reads Termux's apt index, resolves
-`nodejs-lts` + `bash` and their runtime dependencies (libc++, openssl, c-ares,
-libicu, libsqlite, zlib, readline, ncurses, libiconv, libandroid-support),
-extracts the `.deb`s in pure Python, and:
+<a id="download"></a>
+<h3 align="center">下载 DSH Go</h3>
 
-* ships executables as `libnode_exec.so` / `libbash_exec.so` (Android only
-  extracts `lib*.so` from `lib/<abi>/`);
-* ships every library as `lib<name>_tx.so` — flat `lib*.so` names are required
-  for packaging, and the suffix avoids collisions with Android's own `libz.so`,
-  `libcrypto.so`, `libssl.so` (different builds);
-* **does not modify any ELF.** The manifest (`assets/termux-manifest-<abi>.json`)
-  maps each original soname (`libz.so.1`, `libc++_shared.so`, `libicuuc.so.78`…)
-  to its flat file; at startup the app creates `filesDir/termux-lib/<soname>`
-  symlinks into `nativeLibraryDir` and runs node/bash with
-  `LD_LIBRARY_PATH=filesDir/termux-lib:nativeLibraryDir`.
+<p align="center">从 GitHub Releases 或官网下载页获取最新版 APK，常见手机选 arm64 包。</p>
 
-*Why not patchelf:* an earlier version renamed `DT_NEEDED`/`SONAME` with patchelf
-0.18. On these 16 KiB-aligned Termux ELFs patchelf wrote `.dynstr`/`.dynsym` at
-file offsets that disagree with the `PT_LOAD` mapping them (x86_64 node, bash,
-ICU, OpenSSL, SQLite, readline), and Bionic's linker crashed in
-`soinfo::set_dt_runpath` before `main` (SIGSEGV, exit 139, emulator tombstone).
-Byte-identical Termux binaries plus soname symlinks remove that risk for every ABI.
+<p align="center">
+  <a href="https://github.com/ccch1mneyyy/dsh-go/releases/latest"><img alt="从 GitHub Releases 下载" src="https://img.shields.io/badge/GitHub%20Releases-%E4%B8%8B%E8%BD%BD%20APK-4B67B4?style=for-the-badge&logo=github&logoColor=white&labelColor=2B3245"></a>&emsp;<a href="https://go.dshtui.com/download"><img alt="从官网下载页下载" src="https://img.shields.io/badge/go.dshtui.com-%E5%AE%98%E7%BD%91%E4%B8%8B%E8%BD%BD-4B67B4?style=for-the-badge&labelColor=2B3245"></a>
+</p>
 
-**W^X (Android 10+):** apps targeting API 29+ cannot `execve` files in their data
-dir. Executables therefore live in `nativeLibraryDir` (`android:extractNativeLibs="true"`,
-`packaging.jniLibs.useLegacyPackaging = true`, `keepDebugSymbols` so AGP never strips
-the prebuilt ELFs). `filesDir/bin/{node,bash}` are **symlinks** into
-`nativeLibraryDir` — execve checks the target inode, so this is allowed where a
-shell-script shim would be refused. JS is data and is unzipped to `filesDir/dsh`.
+<p align="center">
+  <b>感谢大家对 DSH Go 的支持和喜爱，我将尽快适配 iOS 和鸿蒙！大家 Star 点得越多，我适配得越快哦 hhh</b>
+</p>
 
-### DSH native addons — what happens to each
+<p align="center">
+  <a href="https://github.com/ccch1mneyyy/dsh-go/stargazers"><img alt="GitHub Star 数" src="https://img.shields.io/github/stars/ccch1mneyyy/dsh-go?style=flat-square&logo=github&label=Star&color=4B67B4&labelColor=2B3245"></a>
+</p>
 
-| Addon | Used for | On Android |
-|---|---|---|
-| `node-addon-require-builtin` | DSH's profile resolver / plugin loader reach Node's internal module loader | **Replaced by a JS shim** over `node --expose-internals` (same capability; DSH's loader already tries the flag first). Required — DSH does not boot without it |
-| `@deepseek-ai/node-addon-system` (flock) | exclusive lock on each JSONL session file | **JS fallback**: lock treated as acquired. Safe because exactly one DSH process owns `$DSH_HOME` on the device; not safe for several processes sharing one home |
-| `@deepseek-ai/node-addon-system` (landlock-run) | confined bash sandbox | Not shipped (no Android build). The overlay sets sandbox mode `danger-full-access` with approval policy `ask` |
-| `node-pty` | web terminal panel | prebuilds removed → terminal panel unavailable; the agent's `bash` tool is unaffected |
-| `koffi`, `sharp`, `sherpa-onnx` | FFI (computer-use), image processing, speech | removed → those features unavailable |
-| `@deepseek-ai/libreoffice-kit-wasm` (150 MB) | OOXML→PDF preview | assets removed (Linux-only package) → office preview unavailable |
+<p align="center">
+  <sub>第一次用可以先看<a href="docs/guide/README.md">使用指南</a>，遇到问题欢迎来<a href="#community">论坛和 QQ 群</a>。</sub><br>
+  <sub>手机上装过签名不同的早期测试包时不能直接覆盖安装，需要先卸载旧版；卸载会清空对话、Linux 环境和设置。</sub>
+</p>
 
-Building these for android-arm64 with the NDK is the natural next step
-(`node-pty` and the flock C source are small).
+<br>
 
-`process.platform` is reported honestly as `android`; DSH has almost no
-`linux`-only branches (the ones found are desktop "open in app" helpers).
+<h3 align="center">本机运行，也能遥控电脑</h3>
 
-### Bundling DSH
+<p align="center">内置 Linux 环境，免 Root、免 Termux。电脑上的 DSH，也能一键切过去接着用。</p>
 
-DSH is consumed as its **published npm packages** (`@deepseek-ai/dsh@0.2.2-rc.1`,
-pinned in `dsh/versions.json`) rather than a monorepo build: the npm tree is the
-built JS. `runtime/scripts/build_dsh_bundle.sh` installs it with npm (plus `pnpm`, which DSH
-needs for plugin installs), prunes native code / types / maps, applies `patch_runtime.mjs`, copies in
-the root-shell plugin, and zips it to `assets/dsh-bundle.zip` (stored uncompressed in
-the APK). The app extracts it once per app version.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/f-remote-zh-dark.webp">
+    <img src="docs/assets/f-remote-zh-light.webp" width="100%" alt="本机对话、切换主机、电脑上的对话">
+  </picture>
+</p>
 
-### Performance (v0.1.1)
+<br>
 
-* **Release build.** The shipped APK is the R8-minified, non-debuggable
-  `release` build type (v0.1.0 shipped `assembleDebug`: a debuggable app runs
-  ART without its compiled-code optimisations, including the WebView's Java
-  side, and has WebView remote debugging and JDWP on).
-* **Nothing blocking the UI thread.** Extraction, symlinks, config and
-  Keystore (EncryptedSharedPreferences) reads, process spawn and log reading
-  all run on background threads; `stop`/`restart` never wait for node on the
-  main thread. Debug builds turn on StrictMode (log-only).
-* **Extraction once per install** (stamp = version + install time), into a
-  temp dir that is renamed into place, old tree deleted in the background;
-  progress shown in the status strip. ~2.3k files nothing loads (READMEs,
-  tests, TS sources, `@types`) are pruned from the bundle.
-* **Node boot.** No separate self-test node start on ordinary launches (only
-  right after extraction); V8 compile cache (`NODE_COMPILE_CACHE` in
-  `cacheDir`); `dsh/launcher/perf-preload.mjs` memoises the ~5k
-  `existsSync`/package.json reads DSH's boot makes under the read-only bundle
-  dir; `--max-old-space-size` = RAM/4 clamped to 768–2048 MB; node runs at
-  `nice +4` so it yields to the UI and the WebView renderer.
-* **WebView.** Hardware-accelerated window, no extra layer, offscreen
-  pre-raster, unused features off, remote debugging only in debug builds, and
-  the page is never reloaded on resume (only when the server's URL changes).
-  Back moves the app to the background instead of destroying the WebView.
-  DSH's desktop `backdrop-filter: blur(40px)` menus/masks are replaced by the
-  same colours made opaque (`Perf.CSS`), a common mobile scroll-jank source.
-* **Logs.** Server output is written to `dsh.log` with batched flushes (capped
-  at 4 MB per run); after the server is up a release build only copies
-  warnings/errors to logcat. Menu → **Logs** reads only the last 96 KB, off
-  the UI thread, and shows the **startup phase timings** of the last 10 boots
-  (`extract`, `links`, `config`, `selftest`, `spawn`, `spawn->ready`, `total`, ms).
+<h3 align="center">插话、打断，过程自动收好</h3>
 
-## KernelSU setup
+<p align="center">回复中途也能插话，排队的消息随时「立即发送」。做完的过程折叠成一行。</p>
 
-1. Install KernelSU (or KernelSU Next / SukiSU) on your device and its manager app.
-2. Install the APK (`parakeet-agent-v0.1.1-arm64-v8a.apk`) and open it.
-3. Tap **Check / request root (KernelSU)**. The app runs `su -c id`.
-   If KernelSU is installed but this app is not granted, the button opens the
-   manager: go to **Superuser**, find **Parakeet Agent**, allow it, and tap the
-   button again. The strip shows `Root: granted (uid 0) via /system/bin/su`.
-4. Without root the app still works; the strip says root is unavailable, the
-   `root_shell` tool reports it, and the normal (non-root) `bash` tool is used.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/f-steer-zh-dark.webp">
+    <img src="docs/assets/f-steer-zh-light.webp" width="100%" alt="生成中排队一条消息；完成后过程折叠">
+  </picture>
+</p>
 
-Probing: `/system/bin/su`, `/system/xbin/su`, `/debug_ramdisk/su`, `/sbin/su`,
-`/data/adb/ksu/bin/su`; KernelSU markers `/data/adb/ksu`, `/data/adb/ksud`
-(readable only after a grant) and the manager packages (visible before). Magisk is
-not a target but uses the same `su -c` contract and will likely work.
+<br>
 
-## Configure a model provider
+<h3 align="center">原生界面，也有网页版</h3>
 
-Menu → **Settings**:
+<p align="center">和官方网页版一键切换，停在同一段对话，下次打开还是你上次用的那个。</p>
 
-| Field | Example |
-|---|---|
-| Provider type | OpenAI-compatible (DeepSeek, OpenAI, Qwen/DashScope, Moonshot, SiliconFlow, OpenRouter, vLLM, Ollama…), Anthropic Messages API, DeepSeek (native DSH adapter), or None |
-| Base URL | `https://api.deepseek.com/v1`, `https://api.openai.com/v1`, `https://api.anthropic.com` |
-| Model | `deepseek-chat`, `gpt-4.1`, `claude-sonnet-4-5`, … |
-| API key | stored only in EncryptedSharedPreferences |
-| Protocol override | `openai-completions` / `openai-responses` / `anthropic-messages` |
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/f-web-zh-dark.webp">
+    <img src="docs/assets/f-web-zh-light.webp" width="100%" alt="同一段对话的原生界面与网页版">
+  </picture>
+</p>
 
-Save restarts the runtime. The launcher turns the settings into a DSH overlay
-(`$DSH_HOME/parakeet.patch.yml`) with a pi-ai route named `parakeet` whose
-`apiKeyEnv: PARAKEET_API_KEY` — the key reaches DSH only as an environment variable
-of its process, never a file. You can also leave the type at **None** and add
-providers from the DSH web UI's Models page.
+<br>
 
-## Install DSH plugins
+<h3 align="center">分享卡、对话回放和链接</h3>
 
-DSH's plugin system works unchanged; the app supplies its bundled pnpm to DSH as the
-package manager (`packageManager: { command: <node>, args: [pnpm.mjs] }`).
+<p align="center">回复一键做成分享卡。整段对话生成链接，对方在浏览器里回放，链接端到端加密。</p>
 
-* **Web UI:** open the Plugins page and install from npm.
-* **Agent shell:** ask the agent, or run in its bash tool:
-  `node "$HOME/dsh/launch.mjs" plugin --profile web add <npm-package>`
-  then restart the runtime from the menu.
-* Plugins with native addons need an android build of that addon. Git-hosted plugins
-  (`github:owner/repo#ref&path:/.dsh-plugin`) need `git`, which the app does not ship yet.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/f-share-zh-dark.webp">
+    <img src="docs/assets/f-share-zh-light.webp" width="100%" alt="分享卡、对话回放、我的分享链接">
+  </picture>
+</p>
 
-## Security
+<br>
 
-* **Root is dangerous.** A model can be wrong, and prompt injection from a web page
-  or file can steer it. With root it can delete `/data`, overwrite partitions, or
-  soft-brick the device.
-* **"Require confirmation before root commands" is ON by default** (Settings). Each
-  `root_shell` call then goes through DSH's approval service and the web UI asks you
-  to allow it, showing the command and the agent's stated reason. The toggle is
-  re-read on every command.
-* Some commands are **always** confirmed whatever the toggle says: writes to
-  `/dev/block`, `dd … of=/dev/block/…`, `mkfs`, `fastboot`, `wipe`, `rm -rf` on
-  `/system`, `/vendor`, `/data`, `/sdcard`, … (`DANGEROUS_PATTERNS` in
-  `dsh/plugin-root-shell/lib/su.js`). This is a guard-rail, not a sandbox.
-* If you switch DSH's permission preset to `danger-full-access` (approval `never`),
-  approvals are auto-rejected, so root commands needing confirmation will fail.
-* The non-root `bash` tool runs as the app's uid with full access to the app's own
-  files (Android has no Landlock launcher, so DSH's file sandbox is off).
-* The DSH web server binds 127.0.0.1 only and requires its per-launch token.
-* DSH telemetry is disabled (`DSH_TELEMETRY_DISABLED=1`).
-* The APK is signed with a **self-signed key committed to this repo** so CI builds
-  upgrade over each other. It protects nothing; do not reuse it.
+<h3 align="center">横屏与平板</h3>
 
-## Build
+<p align="center">横屏手机和平板重新排版：侧栏常驻，内容居中，弹出键盘也不挤。</p>
 
-CI (`.github/workflows/android.yml`) does everything: build the DSH bundle and run the
-Linux smoke test → repackage Termux node/bash for arm64-v8a and x86_64 → Gradle unit
-tests + APKs → emulator smoke test → GitHub Release `v0.1.0`.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/f-adaptive-zh-dark.webp">
+    <img src="docs/assets/f-adaptive-zh-light.webp" width="100%" alt="平板与横屏手机">
+  </picture>
+</p>
 
-Locally (Linux, Node 24, JDK 17, Android SDK, Gradle 8.11, zip, zstd):
+<br>
+
+<h3 align="center">主题配色与桌面图标</h3>
+
+<p align="center">六套主题色，也能跟随壁纸或自选颜色。四款桌面图标，三种功能图标风格。</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/f-theme-zh-dark.webp">
+    <img src="docs/assets/f-theme-zh-light.webp" width="100%" alt="主题设置与两种主题色">
+  </picture>
+</p>
+
+<br>
+
+<h3 align="center">中文，也说 English</h3>
+
+<p align="center">全部界面支持英文，在设置里切换，默认跟随系统。</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/f-lang-dark.webp">
+    <img src="docs/assets/f-lang-light.webp" width="100%" alt="同一段对话的中文与英文界面">
+  </picture>
+</p>
+
+<br>
+
+<h3 align="center">手机操控</h3>
+
+<p align="center">看屏幕、帮你点，三档确认随你选。敏感操作默认交还给你；放宽应用规则或解除限制前，请先了解风险。</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/f-phone-zh-dark.webp">
+    <img src="docs/assets/f-phone-zh-light.webp" width="100%" alt="手机操控与确认方式">
+  </picture>
+</p>
+
+<br>
+
+## 可以做什么
+
+DSH Go 提供聊天界面、本机运行环境和远程连接，是基于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的第三方项目。运行在手机上的是 DSH 引擎；模型请求仍由你配置的模型提供方处理。
+
+- **本机运行**：在 App 内安装 Ubuntu、Node.js 与 DSH 运行环境，无需 Root 或另装 Termux。
+- **远程连接**：通过 SSH 或李国宝老师开发的 [DSHarness Remote](https://github.com/liguobao/ds-harness-remote) 使用电脑、服务器上的 DSH。
+- **聊天与工具**：切换模型，发送图片、使用语音输入，处理工具审批和提问；支持聊天界面与网页模式。
+- **插件界面**：使用适配 DSH Go 的原生工具卡、表单和面板；仓库提供 SDK、教程和示例。
+- **手机操控**：在你开启权限后，让本机引擎读取屏幕、点按和输入，并可随时停止。
+- **分享与外观**：分享、导出和回放对话，调整主题、图标和桌宠。
+
+功能随主机和连接方式不同。DSHarness Remote 当前只支持图片附件，不能在 App 内打开网页版，插件管理限于开关，且不支持 DS Bot 和对话日志导出。详见[本机引擎与远程主机](docs/guide/zh/03-engine-hosts.md)。
+
+## 安装
+
+安装要求为 Android 8.0（API 26）及以上。Release 页面上的 **arm64** 安装包适用于常见的 64 位 Android 手机；x86_64 设备和模拟器用的 x64 包在发布说明末尾的「其他版本下载」里。仓库没有 32 位 ARM 构建。
+
+1. 从 [GitHub Releases](https://github.com/ccch1mneyyy/dsh-go/releases/latest) 或[官网下载页](https://go.dshtui.com/download)下载对应架构的 APK，并按系统提示允许该安装来源。
+2. 首次启动时，选择在本机安装运行环境，或连接远程主机。
+3. 为所选主机配置模型和所需凭据，再开始对话；部分远程渠道需要在主机侧配置。
+
+仅连接远程主机时，不必在手机上安装本机运行环境。手机操控只对正常模式下的本机引擎开放，需要按界面说明开启无障碍等权限；不打扰模式另外要求 Android 14 及以上，以及 Shizuku 或自连 ADB。首次使用可按[使用指南](docs/guide/README.md)逐项配置。
+
+本地引擎默认使用 PRoot 兼容启动。开发者选项中的直接启动默认关闭，开启后的兼容性和回退方式见[常见问题](docs/guide/zh/11-faq.md)。当前 Android 构建以 APK 侧载为目标，不是 Google Play 发布配置。
+
+## 数据与权限
+
+模型请求会发送给你配置的提供方。开启手机操控后，任务需要的屏幕文字可能发送给模型，支持看图的模型也可能收到截图；请先阅读 App 的权限说明。
+
+“发送匿名使用统计”默认开启，可在首次引导或“设置 → 隐私与分享”关闭。采集范围和关闭后的处理见[常见问题](docs/guide/zh/11-faq.md)。分享内容前，请检查预览；收到链接或文件的人可以保存其中的内容。
+
+## 风险提示与免责声明
+
+DSH Go 是社区开发的非官方项目，与 DeepSeek 无关联，也不代表 DeepSeek。使用前请了解：
+
+- **AI 并非万无一失**：回答、代码和操作可能出错，也可能被网页、消息或文件中的恶意指令误导。请核验重要结果；医疗、法律、投资等高风险决策不应仅依赖 AI 输出。
+- **工具会产生真实影响**：本机或远程主机上的命令、文件修改及手机操控可能导致数据丢失、隐私泄露、账号、资金或设备损失。免确认、放宽应用规则或解除限制会减少保护；确认与拦截机制不能保证消除所有风险。建议保留默认保护，只授予必要权限，不在存有支付或银行信息的设备上解除限制。详见[手机操控指南](docs/guide/zh/04-phone-control.md)。
+- **第三方服务与费用**：模型、远程主机和插件等按各自条款运行；相关数据处理、服务可用性和费用取决于你选择的服务与配置。本机运行不等于模型离线，也不代表数据不会离开设备。
+- **使用前做好防护**：备份重要数据，只连接可信主机、安装可信插件，留意模型用量与费用；不要让 AI 无人值守地处理不可逆或高风险任务。
+- **无担保与责任范围**：在适用法律允许的范围内，本软件按“现状”提供，不保证准确性、持续可用性或满足特定用途；相关无担保及责任限制见 [LICENSE](LICENSE) 第 15–17 条。本声明不排除或限制依法不得排除或限制的责任，也不减损你依法享有的权利。
+
+## 常见问题
+
+<details>
+<summary><b>和 DeepSeek 官方是什么关系？</b></summary>
+<br>
+
+没有关系。DSH Go 是社区开发的非官方客户端，基于开源的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 构建。手机上运行的是 DSH 本身；模型请求发给你配置的模型提供方，需要联网，按你在提供方的账户计费。
+
+</details>
+
+<details>
+<summary><b>安全吗？</b></summary>
+<br>
+
+本机网页版只接受 App 自己的访问。分享链接端到端加密，密钥只在链接里，服务器看不到内容，但获得完整链接的人可以读取并保存内容。手机操控默认保留敏感操作保护；放宽应用规则或开启「解除限制」会减少这些保护。安全机制不能保证零风险，详见[风险提示与免责声明](#风险提示与免责声明)和[手机操控指南](docs/guide/zh/04-phone-control.md)。
+
+</details>
+
+<details>
+<summary><b>切到后台会被杀吗？</b></summary>
+<br>
+
+部分系统的省电策略会拦住后台。DSH Go 发现后会提醒你，并直达对应的放行设置，vivo、小米、华为、荣耀、OPPO 都有。
+
+</details>
+
+<details>
+<summary><b>对手机有什么要求？</b></summary>
+<br>
+
+Android 8 及以上。手机直接下载 Release 页面上的安装包即可，模拟器用的 x86_64 版在发布说明末尾的「其他版本下载」里。在手机上运行 DSH 要先准备内置的运行环境，请预留约 1 GB 空间；只连电脑或服务器上的 DSH 可以不装。
+
+</details>
+
+<details>
+<summary><b>开源吗？</b></summary>
+<br>
+
+开源，代码就在这个仓库，以 [AGPL-3.0](LICENSE) 发布，`sdk/` 和 `examples/` 为 MIT。DSH Go 的名称和标识，以及 Deepy、鲸娘两位吉祥物，不在开源授权范围内，见 [ASSETS.md](ASSETS.md)。再发布和 fork 时的署名要求见[授权范围与再发布](#授权范围与再发布)。
+
+</details>
+
+## 从源码构建
+
+以下流程面向 **Linux x86_64**。当前工具链脚本默认安装 JDK 17、Flutter 3.47.7 和 Android SDK/NDK；App 要求 Dart `^3.13.5`。准备 Bash、Git、curl、tar、unzip、xz、Python 3、zstd（Python 未提供 `compression.zstd` 时用于解包 zstd 压缩的 deb）、file 和常见 GNU 命令；重新解析 Ubuntu 软件包锁时还需要 gpgv。
+
+先取得完整源码和项目资源。`app/pubspec.yaml` 声明的字体、图片等都是构建输入，运行时包由下面的脚本生成。
 
 ```bash
-runtime/scripts/build_dsh_bundle.sh /tmp/dsh-rt app/src/main/assets/dsh-bundle.zip
-runtime/tests/smoke-linux.sh /tmp/dsh-rt
-python3 runtime/scripts/fetch_termux.py app/src/main/jniLibs/arm64-v8a
-gradle :app:testDebugUnitTest :app:assembleDebug
+git clone https://github.com/ccch1mneyyy/dsh-go.git
+cd dsh-go
+
+bash tooling/setup-toolchain.sh
+source tooling/env.sh
+flutter --version
+java -version
+
+bash runtime/build-runtime.sh arm64-v8a
+DSH_BETA_TOKEN_FILE= bash tooling/build-apk.sh -f arm64 --keep-daemon
 ```
 
-## Known limitations
+工具链脚本会下载 SDK/NDK 与模拟器镜像，并执行 Android SDK 许可接受步骤。默认安装到 `~/dev`；可通过 `DEV_ROOT` 指定独立目录。脚本会复用已有安装，构建前请核对版本。
 
-* arm64 and KernelSU paths untested on hardware (see Status).
-* Web terminal panel, computer-use, image processing, speech, office preview are
-  off (native addons, see table). flock is a no-op (single process).
-* First launch unzips ~200 MB into app storage.
-* Termux removes old package versions from its repo; CI always takes the current
-  `nodejs-lts`, so a rebuild may pick a newer Node 24.x.
-* No `git` on device, so git-hosted DSH plugins cannot be installed yet.
-* APK is large (~100 MB arm64) because of node + ICU data + the DSH tree.
+产物为 `app/build/app/outputs/flutter-apk/app-arm64-release.apk`。运行时构建使用仓库固定的版本与校验信息，并需要联网下载依赖。示例中的 `DSH_BETA_TOKEN_FILE=` 不嵌入维护者的内测通道令牌；`--keep-daemon` 保留 Gradle daemon，适合同时开发其他 Android 项目的环境。
 
-## Next steps
+构建 x86_64 包时，先生成对应运行时：
 
-1. Run the arm64 APK on a KernelSU device; confirm the grant flow and `root_shell`.
-2. NDK builds of `node-pty` (terminal) and the flock addon; ship them as `lib*.so`.
-3. Ship Termux `git` for git-hosted plugins.
-4. A native Android approval dialog in addition to the web UI prompt.
-5. Optional: stream DSH ACP over stdio for a Compose UI.
+```bash
+bash runtime/build-runtime.sh x86_64
+DSH_BETA_TOKEN_FILE= bash tooling/build-apk.sh -f x64 --keep-daemon
+```
 
-## License
+未配置 `app/android/key.properties` 时，本地 release 构建使用 debug 签名。它不能直接覆盖不同签名的官方安装包；请在测试设备上安装，保留已有数据，不要为解决签名冲突直接卸载正在使用的 App。发布签名与密钥文件不要提交到仓库。
 
-MIT for this repository's code. Bundled components keep their licenses: DeepSeek
-Harness (MIT), Node.js (MIT), Termux packages (bash GPL-3.0, readline GPL-3.0,
-ncurses MIT-style, OpenSSL Apache-2.0, ICU Unicode, zlib, c-ares MIT, SQLite public
-domain, libc++ Apache-2.0 with LLVM exception).
+只查看 APK 构建命令，可运行：
 
----
+```bash
+DSH_BETA_TOKEN_FILE= bash tooling/build-apk.sh --dry-run -f all
+```
 
-## 中文说明
+## 目录
 
-Parakeet 是一个**本身就是 AI 代理**的 Android 应用。它在手机上直接运行内置的
-Node.js 24 和真正的 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness)
-——**不用容器、proot、chroot 或虚拟机**——并通过 **KernelSU** 给代理一个 root shell。
-支持任意厂商的模型 API(OpenAI 兼容、Anthropic Messages、DSH 原生 DeepSeek 适配器),
-DSH 插件无需修改即可安装运行。
+| 路径 | 内容 |
+| --- | --- |
+| `app/` | Flutter 界面与 Android Kotlin 平台实现 |
+| `packages/dsh_client/` | DSH Web API 的 Dart 客户端 |
+| `packages/dsh_remote/` | DSH Remote 的 Dart 客户端 |
+| `runtime/` | Linux 运行时打包、引擎补丁与 App 桥接 |
+| `sdk/plugin-kit/` | 原生插件作者工具包；在仓库中使用，未发布到 npm |
+| `examples/plugins/` | 插件示例 |
+| `docs/guide/`、`docs/plugins/` | 用户指南与插件开发文档 |
+| `docs/assets/` | 本页用到的展示图、桌宠动图和社群二维码 |
+| `tooling/` | 工具链、APK 构建与诊断脚本 |
+| `services/`、`site/`、`infra/` | 配套分享服务、网站和部署材料 |
 
-> ⚠️ **拥有 root 的代理可能让设备变砖或清空数据。** 授予 root 前请阅读「安全」一节。
+## 参与贡献
 
-### 验证情况
+问题反馈和改进建议可提交到 [Issues](https://github.com/ccch1mneyyy/dsh-go/issues)。代码、文档和翻译贡献请先看 [CONTRIBUTING.md](CONTRIBUTING.md)。插件作者可以从[插件教程](docs/plugins/README.md)和 [SDK](sdk/plugin-kit/README.md)开始。
 
-| 内容 | 验证方式 |
-|---|---|
-| 随 APK 发布的 DSH 运行树(已移除 glibc/musl 原生插件,使用 JS 回退)能启动 `dsh web` 并提供界面 | CI,Linux,Node 24 |
-| 完整代理回合:应用设置中的供应商 → 模型调用 `root_shell` → 经 `su`(持久会话)执行 → 输出返回模型 | CI,Linux,模拟 OpenAI 兼容服务器 + 假 `su` |
-| 开启"root 命令需确认"且无审批通道时,`root_shell` 拒绝执行 | CI,Linux |
-| Kotlin `su` 封装、配置校验 | CI,JVM 单元测试 |
-| Termux node/bash 在 W^X 限制下从 `nativeLibraryDir` 执行、依赖库可解析、应用内启动 DSH、127.0.0.1 上的网页界面可访问 | CI,**x86_64 Android 模拟器(API 30)**,使用同一 Termux 软件包的 x86_64 版本 |
-| arm64 真机运行 | **未验证** |
-| KernelSU 授权流程、真机 root 命令 | **未验证**(CI 没有 KernelSU 设备;代码路径用假 `su` 做了单元测试) |
+安全问题请按 [SECURITY.md](SECURITY.md) 报告，避免在公开 Issue 中提交漏洞细节或凭据。
 
-### 架构要点
+<a id="community"></a>
 
-* **Node ≥ 24:** 采用 Termux 预编译的 `nodejs-lts`(Bionic libc)。`fetch_termux.py`
-  解析 Termux 软件源、下载依赖,把所有库原样(不修改 ELF)改名为 `lib<名字>_tx.so`
-  (避免与系统的 `libz.so`/`libcrypto.so`/`libssl.so` 冲突),可执行文件改名为
-  `libnode_exec.so`/`libbash_exec.so`,放进 `jniLibs`。应用启动时按清单在
-  `filesDir/termux-lib/` 下创建“原始 soname → nativeLibraryDir 文件”的符号链接,
-  并设置 `LD_LIBRARY_PATH`。(早期版本用 patchelf 改写 ELF,导致 x86_64 上
-  `.dynstr` 文件偏移与 PT_LOAD 不一致、链接器段错误,已弃用。)
-* **W^X:** Android 10+ 禁止执行应用数据目录中的文件,所以可执行文件放在
-  `nativeLibraryDir`(`extractNativeLibs=true` + legacy packaging),
-  `filesDir/bin/{node,bash}` 是指向那里的符号链接。
-* **DSH:** 直接使用 npm 上发布的 `@deepseek-ai/dsh@0.2.2-rc.1`(已是构建好的 JS),
-  打包为 `assets/dsh-bundle.zip`,首次启动解压。
-* **原生插件:** `node-addon-require-builtin` 用基于 `--expose-internals` 的 JS 垫片替代;
-  flock 用单进程空操作回退;landlock、node-pty(网页终端)、koffi、sharp、sherpa-onnx、
-  LibreOffice WASM 未打包,对应功能不可用。详见英文表格。
-* **root 插件:** `@parakeet/dsh-plugin-root-shell` 是一个 Cordis 插件,注册
-  `root_shell` 和 `root_status` 工具;使用持久 `su` 会话,经 DSH 审批服务确认。
+## 社区
 
-### KernelSU 设置
+- **论坛**：[forum.dshtui.com](https://forum.dshtui.com)
+- **QQ 群**：`1132118290`（[点此加群](https://qm.qq.com/q/OEy2RqZnqY)）
+- **微信群**：扫下方二维码，过期请加 QQ 群
+<!-- Telegram：链接待定，拿到后加一行 -->
 
-1. 设备安装 KernelSU(或 KernelSU Next / SukiSU)及其管理器。
-2. 安装 `parakeet-agent-v0.1.1-arm64-v8a.apk` 并打开。
-3. 点击 **Check / request root (KernelSU)**(执行 `su -c id`)。若未授权,应用会打开管理器:
-   在 **超级用户** 页找到 **Parakeet Agent** 并允许,再点一次按钮,状态栏显示
-   `Root: granted (uid 0)`。
-4. 没有 root 时应用照常工作,会明确显示 root 不可用,代理使用普通 shell。
+<p align="center">
+  <a href="https://qm.qq.com/q/OEy2RqZnqY"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/qr-qq-zh-dark.webp"><img src="docs/assets/qr-qq-zh-light.webp" width="300" alt="QQ 群 DSH-Go！！，群号 1132118290"></picture></a>&emsp;&emsp;<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/qr-wechat-zh-dark.webp"><img src="docs/assets/qr-wechat-zh-light.webp" width="300" alt="微信群 DSHGo 2群"></picture>
+</p>
 
-### 配置模型供应商
+<p align="center">
+  <sub>QQ 群号 <code>1132118290</code>，电脑上可<a href="https://qm.qq.com/q/OEy2RqZnqY">直接点此加群</a>。微信群二维码每周更新，过期请加 QQ 群。</sub>
+</p>
 
-菜单 → **Settings**:选择供应商类型(OpenAI 兼容 / Anthropic / DeepSeek / 无),
-填写 Base URL(如 `https://api.deepseek.com/v1`)、模型名(如 `deepseek-chat`)、API Key。
-API Key 只保存在 EncryptedSharedPreferences 中,仅以进程环境变量 `PARAKEET_API_KEY`
-传给 DSH,不会写入任何文件。保存后运行时自动重启。也可以选"None",在 DSH 网页界面的
-Models 页面添加供应商。
+## 友情链接
 
-### 安装 DSH 插件
+- **[DSH-TUI](https://dshtui.com/)**：同一作者的作品，面向 DeepSeek Harness 的交互式终端界面。手机上用 DSH Go，电脑上就用它——像素鲸鱼、实时状态、时间回溯，装上即开工（[GitHub](https://github.com/ccch1mneyyy/dsh-TUI)）。
 
-* 网页界面的 **Plugins** 页面直接从 npm 安装;
-* 或在代理的 bash 中执行:`node "$HOME/dsh/launch.mjs" plugin --profile web add <npm 包名>`,
-  然后在菜单中重启运行时。
-* 含原生插件的 DSH 插件需要对应的 Android 构建;git 托管的插件需要 `git`,暂未内置。
+## 授权范围与再发布
 
-### 安全
+代码以 [AGPL-3.0](LICENSE) 开源，欢迎 fork 学习、自用和二次开发。请尊重原作者和项目来源：
 
-* root 代理可能误操作,网页或文件中的提示注入也可能诱导它。
-* **"执行 root 命令前需确认"默认开启**:每条 `root_shell` 命令都会经 DSH 审批,在网页界面
-  显示命令和理由,由你允许或拒绝;该开关每条命令都会重新读取。
-* 写 `/dev/block`、`dd of=/dev/block/…`、`mkfs`、`fastboot`、`wipe`、对 `/system`
-  `/data` `/sdcard` 等执行 `rm -rf` 的命令**无论开关如何都会询问**。这是护栏,不是沙箱。
-* 若把 DSH 权限预设切到 `danger-full-access`(审批策略 never),需确认的 root 命令会被自动拒绝。
-* 非 root 的 bash 工具以应用 uid 运行,DSH 文件沙箱在 Android 上关闭。
-* DSH 网页服务只监听 127.0.0.1 并要求每次启动的令牌;遥测已关闭。
-* APK 使用**提交在仓库中的自签名密钥**,不提供任何安全保证,请勿复用。
+- **改造前请提前联系作者**：如需基于本项目进行改造、二次开发或衍生产品发布，请先通过 [Issues](https://github.com/ccch1mneyyy/dsh-go/issues) 或[社区](#community)联系原作者 ccch1mneyyy，说明用途与计划。
+- **fork 请标注主仓库与作者**：基于本仓库改造并发布时，请在仓库说明、应用「关于」页和发布页面清楚标注主仓库 <https://github.com/ccch1mneyyy/dsh-go> 与原作者 [ccch1mneyyy](https://github.com/ccch1mneyyy)，并按适用许可证保留版权、许可及修改声明。
+- **禁止未授权商业化套皮**：不得未经授权将本项目的品牌标识、Deepy、鲸娘等受保护素材用于套皮售卖、收费分发或其他商业产品；不得违反适用许可证，删除应保留的版权与许可声明、闭源分发衍生代码，或冒充原作者、官方版本。
+- **名称与素材另有限制**：DSH Go 的名称、标识，以及 Deepy、鲸娘形象不在 AGPL 授权范围内，以修改版身份发布时请换成自己的名称和素材，见 [ASSETS.md](ASSETS.md)。
 
-### 已知限制与后续工作
+**许可说明**：AGPL-3.0 允许符合其条款的修改、再发布和商业使用；上述提前联系及署名位置是作者的协作请求，不是对代码许可证追加的限制。品牌与素材须遵守各自的授权条件；本说明不改变 `sdk/`、`examples/` 及第三方内容的许可。
 
-见英文部分 *Known limitations* 与 *Next steps*:真机/KernelSU 未验证;网页终端等依赖原生
-插件的功能关闭;首次启动解压约 200 MB;下一步是在 KernelSU 真机上验证,并用 NDK 构建
-node-pty 与 flock 原生插件。
+## 许可证与致谢
+
+本项目采用 [AGPL-3.0](LICENSE)；`sdk/` 和 `examples/` 保持 **MIT**。第三方代码和素材以各自声明为准。
+
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)：DSH Go 运行和连接的就是它。
+- [DSH-TUI](https://github.com/ccch1mneyyy/dsh-TUI)：吉祥物 Deepy 小鲸鱼和鲸娘来自这里。
+
+Phase 相关代码经作者许可使用。DeepSeek Harness、PiPilot、DS Bot、DSH Remote 及其他第三方组件、素材保留各自的许可证和署名。具体来源和条款见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+DSH Go 的名称、标识、Deepy 小鲸鱼和鲸娘等形象不在 AGPL 授权范围内，使用条款见 [ASSETS.md](ASSETS.md)。
+
+<sub>远程连接参考了 [ds-harness-remote](https://github.com/liguobao/ds-harness-remote) 的项目和服务器，感谢作者李国宝。</sub>
+
+<br>
+
+<p align="center"><sub>DSH Go 是社区开发的非官方客户端，与 DeepSeek 没有关联，也不代表 DeepSeek。DeepSeek 名称与标识归其所有者所有。</sub></p>
