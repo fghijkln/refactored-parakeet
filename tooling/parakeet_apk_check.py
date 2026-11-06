@@ -39,21 +39,56 @@ ENTRIES = {}   # APK entry name -> bytes (the scanned haystack, per entry)
 REPORT = {}    # check -> {string: [entries]}  (written with --report)
 
 
+# Narrow, documented exceptions: (build language, check, APK entry regex, exact strings or None
+# for any, reason). A flagged string is excused only when EVERY entry it is in matches;
+# excused strings are still printed (ALLOW lines), never silently dropped.
+SKILLS = "assets/flutter_assets/assets/skills/"
+ALLOW = [
+    ("en", "foreign", re.compile(re.escape(SKILLS) + r"(dsh-go-(ui|plugin|support)/[^/]+|dsh-go-guide/SKILL\.md)$"), None,
+     "agent-facing skill bundles (instructions and validator scripts) that upstream dsh-Go writes in Chinese only; "
+     "the app installs them into the engine for the agent, which answers in the user's language; never shown as "
+     "app UI. The user-facing guide pages are single-language (tooling/parakeet_locale.py scrub_assets)."),
+    ("zh", "removed", re.compile(r"^assets/flutter_assets/assets/engine/auth/bridge\.mjs$"), {"正在准备登录", "正在完成登录"},
+     "progress copy of the subscription (ChatGPT / Claude) sign-in bridge, a kept feature; the same words as the "
+     "removed DeepSeek account sign-in's ARB strings."),
+]
+LANG = None
+
+
+def allowed(check, string, entries):
+    for lang, chk, rx, strings, reason in ALLOW:
+        if lang == LANG and chk == check and entries and all(rx.search(n) for n in entries) \
+                and (strings is None or string in strings):
+            return reason
+    return None
+
+
 def where(s):
     """APK entries that carry [s] (UTF-8 or UTF-16LE)."""
     return [n for n, b in ENTRIES.items() if present(b, s)]
 
 
 def flag(check, strings, limit=8):
-    """Print each flagged string with the APK entries it is in; keep all for --report."""
+    """Print each flagged string with the APK entries it is in; keep all for --report.
+    Returns the strings that are not excused by ALLOW."""
     found = {f: where(f) for f in strings}
     REPORT[check] = found
-    by_entry = {}
+    left, excused = [], {}
     for f, ns in found.items():
-        for n in ns:
+        r = allowed(check, f, ns)
+        if r:
+            excused.setdefault(r, []).append(f)
+        else:
+            left.append(f)
+    by_entry = {}
+    for f in left:
+        for n in found[f]:
             by_entry.setdefault(n, []).append(f)
     for n, fs in sorted(by_entry.items(), key=lambda x: -len(x[1])):
         print("      %4d in %s, e.g. %s" % (len(fs), n, fs[:limit]))
+    for r, fs in excused.items():
+        print("  ALLOW %d %s strings (%s), e.g. %s" % (len(fs), check, r[:90] + "…", fs[:4]))
+    return left
 
 
 def ok(msg):
@@ -117,6 +152,8 @@ def main():
     ap.add_argument("--report", help="write every flagged string with its APK entries to this JSON file")
     a = ap.parse_args()
     other = "en" if a.lang == "zh" else "zh"
+    global LANG
+    LANG = a.lang
     print("== %s (%s)" % (os.path.basename(a.apk), a.lang))
 
     # 1. badging
@@ -154,9 +191,9 @@ def main():
 
         # 2. hosts
         hits = [h for h in FORBIDDEN_HOSTS if present(hay, h)]
+        hits = flag("hosts", hits) if hits else hits
         if hits:
             bad("upstream hosts present: %s" % hits)
-            flag("hosts", hits)
         else:
             ok("no upstream hosts (%s)" % ", ".join(FORBIDDEN_HOSTS))
 
@@ -176,9 +213,9 @@ def main():
                 if blank.match(k):
                     removed.update(f for f in fragments(v) if good_fragment(f, lang) and f not in kept_text)
         leaked = sorted(f for f in removed if present(hay, f))
+        leaked = flag("removed", leaked) if leaked else leaked
         if leaked:
             bad("%d removed-feature strings present, e.g. %s" % (len(leaked), leaked[:8]))
-            flag("removed", leaked)
         else:
             ok("none of %d removed-feature strings present" % len(removed))
 
@@ -194,9 +231,9 @@ def main():
         foreign_frags = sorted({f for k, v in theirs.items() for f in fragments(v)
                                 if good_fragment(f, other) and f not in mine_text})
         leaked = [f for f in foreign_frags if present(hay, f)]
+        leaked = flag("foreign", leaked) if leaked else leaked
         if leaked:
             bad("%d/%d %s-only UI strings present, e.g. %s" % (len(leaked), len(foreign_frags), other, leaked[:8]))
-            flag("foreign", leaked)
         else:
             ok("none of %d %s-only UI strings present" % (len(foreign_frags), other))
 

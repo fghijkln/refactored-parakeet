@@ -223,6 +223,57 @@ def scrub_markdown(text, terms):
     return text, dropped
 
 
+# The subscription sign-in bridge (app/assets/engine/auth/bridge.mjs) words its states in
+# Chinese only; the en tree gets these.
+BRIDGE_EN = {
+    "正在准备登录…": "Getting sign-in ready…",
+    "在浏览器里完成登录": "Finish signing in in your browser",
+    "在打开的网页里输入下面的代码": "Enter the code below on the page that opened",
+    "在浏览器里登录后，把地址栏里的完整网址复制下来，粘贴到这里": "After signing in in your browser, copy the full address from the address bar and paste it here",
+    "正在完成登录…": "Completing sign-in…",
+    "登录已取消": "Sign-in cancelled",
+    "登录超时了，再试一次": "Sign-in timed out. Try again",
+    "授权被拒绝了，再试一次": "Authorization was denied. Try again",
+    "网络连不上，检查网络后再试": "Can't reach the network. Check your connection and try again",
+    "粘贴的内容不对，再试一次": "That isn't the right text. Try again",
+    "引擎暂时不能登录，重启引擎后再试": "The engine can't sign in right now. Restart the engine and try again",
+    "上一次登录还没结束，稍后再试": "The last sign-in hasn't finished yet. Try again shortly",
+    "授权没有完成，再试一次": "Authorization didn't finish. Try again",
+    "这次登录已失效，请重新开始": "This sign-in has expired. Start again",
+    "退出登录没有完成，再试一次": "Signing out didn't finish. Try again",
+    "现在不需要粘贴内容": "Nothing needs to be pasted now",
+    "先粘贴授权信息": "Paste the authorization first",
+    "不支持这个登录方式": "This sign-in method isn't supported",
+    "Product copy shown by the app (Chinese, short).": "Product copy shown by the app (short).",
+}
+
+
+def scrub_code_assets(assets):
+    """JS/CSS the app ships into the WebView and the engine (assets/web, assets/engine)."""
+    cjk_comment = re.compile(r"(?m)^[ \t]*//[^\n]*[\u4e00-\u9fff][^\n]*\n")
+    cjk_block = re.compile(r"/\*[\s\S]*?\*/")
+    for sub in ("web", "engine"):
+        for d, _, fs in os.walk(os.path.join(assets, sub)):
+            for name in fs:
+                if not name.endswith((".js", ".mjs", ".css")):
+                    continue
+                p = os.path.join(d, name)
+                text = open(p, encoding="utf-8").read()
+                new = text.replace("DeepSeek account platform", "DeepSeek platform")
+                if LANG == "en":
+                    for zh, en in BRIDGE_EN.items():
+                        new = new.replace("'%s'" % zh, "'%s'" % en.replace("'", "\\'")).replace(zh, en)
+                    # The DSH Web page of an en tree is English only (its runtime carries en.json alone):
+                    # matchers for its Chinese labels go.
+                    new = new.replace('button[aria-label^="查看 "], ', "").replace("'查看 ' + l, ", "")
+                    new = re.sub(r"'[^'\n]*[\u4e00-\u9fff][^'\n]*',\s*", "", new)
+                    new = cjk_comment.sub("", new)
+                    new = cjk_block.sub(lambda m: "" if CJK.search(m.group(0)) else m.group(0), new)
+                if new != text:
+                    open(p, "w", encoding="utf-8").write(new)
+                    print("code asset scrubbed: %s" % os.path.relpath(p, ROOT))
+
+
 def scrub_assets():
     assets = os.path.join(ROOT, "app/assets")
     other = "en" if LANG == "zh" else "zh"
@@ -272,6 +323,17 @@ def scrub_assets():
                 json.dump(data, f, ensure_ascii=False, indent=1)
                 f.write("\n")
             print("plugin kit messages: %s entries now carry the %s text" % (other, LANG))
+    scrub_code_assets(assets)
+    # The community page is removed: its bundled feed keeps the shape and nothing else.
+    feed = os.path.join(assets, "community/community.json")
+    if os.path.isfile(feed):
+        with open(feed, encoding="utf-8") as f:
+            data = json.load(f)
+        empty = {k: ([] if isinstance(v, list) else v) for k, v in data.items() if k in ("schema", "revision", "updatedAt") or isinstance(v, list)}
+        with open(feed, "w", encoding="utf-8") as f:
+            json.dump(empty, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        print("community feed emptied (removed feature)")
     # Upstream hosts -> parakeet.invalid; pet pack source links removed.
     for d, _, fs in os.walk(assets):
         for name in fs:
