@@ -138,6 +138,12 @@ jobs:
           name: parakeet-apk
           path: dist
 
+      # The previous release, timed on the same emulator as a before/after baseline.
+      - name: Baseline APK (v0.1.0)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download v0.1.0 -R "$GITHUB_REPOSITORY" -p '*-universal.apk' -O dist-baseline.apk || echo "no baseline"
+
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -152,7 +158,7 @@ jobs:
           target: default
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -memory 4096
-          script: bash runtime/tests/emulator-smoke.sh dist/parakeet-agent-v${{ env.APP_VERSION }}-universal.apk emulator-logs https://github.com/${{ github.repository }}/releases/download/v0.1.0/parakeet-agent-v0.1.0-universal.apk
+          script: bash runtime/tests/emulator-smoke.sh dist/parakeet-agent-v${{ env.APP_VERSION }}-universal.apk emulator-logs dist-baseline.apk
 
       - uses: actions/upload-artifact@v4
         if: always()

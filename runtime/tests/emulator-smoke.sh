@@ -6,7 +6,7 @@
 # extracts and boots under Bionic with the JS addon fallbacks, and the web UI
 # answers on 127.0.0.1.
 #
-#   runtime/tests/emulator-smoke.sh <apk> <log-dir> [baseline-apk-url]
+#   runtime/tests/emulator-smoke.sh <apk> <log-dir> [baseline-apk]
 #
 # With a baseline APK (the previous release), both builds are timed the same
 # way on this emulator: launch -> "dsh web:" banner in logcat, first launch
@@ -14,25 +14,27 @@
 set -uo pipefail
 APK=${1:?apk}
 LOGS=${2:?log dir}
-BASELINE_URL=${3:-}
+BASELINE=${3:-}
 PKG=dev.parakeet.agent
 mkdir -p "$LOGS"
 TIMING="$LOGS/startup-timing.txt"
 : > "$TIMING"
 
-# ms from `am start` to the server banner (polling every 250 ms).
+# ms from `am start` to the server banner (polling every 250 ms). Only log
+# lines written after the launch count (logcat -T <device time>), so a banner
+# left in the buffer by the previous launch can never satisfy the wait.
 time_launch() {
-  local label=$1 s n
-  adb shell am force-stop "$PKG"; sleep 1
-  adb logcat -c
+  local label=$1 s n since
+  adb shell am force-stop "$PKG"; sleep 2
+  since=$(adb shell date +'%m-%d\ %H:%M:%S.000' | tr -d '\r')
   s=$(date +%s%N)
   adb shell am start -n "$PKG/.MainActivity" > /dev/null
   for n in $(seq 1 2400); do
-    adb logcat -d -s parakeet:I | grep -q "dsh web: http://127.0.0.1" && break
+    adb logcat -d -T "$since" -s parakeet:I | grep -q "dsh web: http://127.0.0.1" && break
     sleep 0.25
   done
-  if adb logcat -d -s parakeet:I | grep -q "dsh web: http://127.0.0.1"; then
-    echo "$label: $(( ($(date +%s%N) - s) / 1000000 )) ms  $(adb logcat -d -s parakeet:I | grep -o 'parakeet-timing:.*' | tr '\n' ' ')" | tee -a "$TIMING"
+  if adb logcat -d -T "$since" -s parakeet:I | grep -q "dsh web: http://127.0.0.1"; then
+    echo "$label: $(( ($(date +%s%N) - s) / 1000000 )) ms to banner  $(adb logcat -d -T "$since" -s parakeet:I | grep -o 'parakeet-timing: [a-z].*=.*total=[0-9]*' | tail -1)" | tee -a "$TIMING"
   else
     echo "$label: did not come up" | tee -a "$TIMING"
   fi
@@ -41,15 +43,14 @@ time_launch() {
 adb wait-for-device
 adb shell getprop ro.product.cpu.abilist | tee "$LOGS/abi.txt"
 
-if [ -n "$BASELINE_URL" ] && curl -fsSL -o "$LOGS/baseline.apk" "$BASELINE_URL"; then
-  adb install -r -g "$LOGS/baseline.apk" > /dev/null && {
+if [ -n "$BASELINE" ] && [ -f "$BASELINE" ]; then
+  adb install -r -g "$BASELINE" > /dev/null && {
     time_launch "before (v0.1.0) first launch"
     time_launch "before (v0.1.0) warm relaunch"
     time_launch "before (v0.1.0) warm relaunch 2"
     adb logcat -d -s parakeet:V > "$LOGS/logcat-baseline.txt"
     adb uninstall "$PKG" > /dev/null
   }
-  rm -f "$LOGS/baseline.apk"
 fi
 
 adb install -r -g "$APK" || { echo "FAIL: install"; exit 1; }
