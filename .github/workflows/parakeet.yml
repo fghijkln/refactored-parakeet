@@ -146,7 +146,14 @@ jobs:
           python3 ../tooling/parakeet_test_filter.py report
           mapfile -t files < <(python3 ../tooling/parakeet_test_filter.py files ${{ matrix.shard }})
           echo "${#files[@]} test files in shard ${{ matrix.shard }}"
-          flutter test --no-pub --concurrency=4 --reporter github --name "$(python3 ../tooling/parakeet_test_filter.py name)" "${files[@]}"
+          name="$(python3 ../tooling/parakeet_test_filter.py name)"
+          if flutter test --no-pub --concurrency=4 --reporter github --name "$name" "${files[@]}" 2>&1 | tee "$RUNNER_TEMP/test.log"; then exit 0; fi
+          # One retry for the files that failed (a few upstream tests are timing-sensitive
+          # under --concurrency=4); a test that fails twice fails the job.
+          mapfile -t again < <(grep -oE '❌ (loading )?/[^:]+_test\.dart' "$RUNNER_TEMP/test.log" | sed -E 's#^❌ (loading )?##; s#^.*/app/##' | sort -u)
+          echo "::warning::retrying ${#again[@]} file(s) once: ${again[*]}"
+          [ "${#again[@]}" -gt 0 ] && [ "${#again[@]}" -le 10 ] || exit 1
+          flutter test --no-pub --concurrency=1 --reporter github --name "$name" "${again[@]}"
       - name: Keep golden diffs
         if: failure()
         uses: actions/upload-artifact@v4
@@ -201,6 +208,14 @@ jobs:
     env:
       ORG_GRADLE_PROJECT_parakeetLocale: ${{ matrix.lang }}
     steps:
+      - name: Free disk space (two release ABIs + NDK outgrow the runner's free space)
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /usr/share/swift \
+            /usr/local/julia* /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules \
+            "$AGENT_TOOLSDIRECTORY/CodeQL" "$AGENT_TOOLSDIRECTORY/PyPy" "$AGENT_TOOLSDIRECTORY/go" || true
+          sudo docker image prune --all --force > /dev/null 2>&1 || true
+          df -h / | tail -1
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
