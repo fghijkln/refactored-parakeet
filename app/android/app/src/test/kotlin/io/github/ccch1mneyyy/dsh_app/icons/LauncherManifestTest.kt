@@ -56,9 +56,9 @@ class LauncherManifestTest {
         assertTrue(mainActivity.children("meta-data").any { it.getAttribute("android:name") == "flutter_deeplinking_enabled" })
     }
 
-    @Test fun thePhoneShowsTheAppAsDshGo() {
+    @Test fun thePhoneShowsTheAppAsParakeet() {
         val app = manifest().children("application").single()
-        assertEquals("DSH Go", app.getAttribute("android:label"))
+        assertEquals("Parakeet", app.getAttribute("android:label"))
         // Notification titles say the same name.
         assertEquals(app.getAttribute("android:label"), AppStrings.APP_NAME)
         // Launcher entries, Recents and the share sheet all take the application's label.

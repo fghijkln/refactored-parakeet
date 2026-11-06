@@ -55,7 +55,11 @@ jobs:
             ls -la "runtime/out-$lang/${{ matrix.abi }}/assets/runtime" "runtime/out-$lang/${{ matrix.abi }}/jniLibs/${{ matrix.abi }}"
           done
       - name: Root-shell plugin unit tests
-        run: node --test runtime/plugins/parakeet-root-shell/test/*.test.mjs
+        # Inside the built DSH tree, where its imports (@deepseek-ai/schemastery, dsh-tools) resolve.
+        run: |
+          p="runtime/.work/${{ matrix.abi }}/dsh-prefix/node_modules/@parakeet/dsh-plugin-root-shell"
+          mkdir -p "$p" && cp -r runtime/plugins/parakeet-root-shell/. "$p/"
+          node --test "$p"/test/*.test.mjs
       - name: Host smoke on Linux (en)
         if: matrix.abi == 'x86_64'
         run: bash runtime/tests/host-smoke.sh runtime/out-en 38123
@@ -123,6 +127,13 @@ jobs:
         run: |
           sudo install -Dm644 -t "$DSH_TEST_FONT_DIR" ~/test-fonts/NotoSansCJK-*.ttc
           sudo install -Dm644 ~/test-fonts/NotoColorEmoji.ttf /usr/share/fonts/noto/NotoColorEmoji.ttf
+      - name: Restore upstream golden images
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/parakeet-upstream-goldens
+          key: upstream-goldens-cf2f7c86
+      - name: Upstream golden images (dsh-Go@cf2f7c8; not stored in this repo)
+        run: bash ../tooling/fetch-upstream-goldens.sh
       - run: flutter pub get --enforce-lockfile
       - name: Analyze, and generated localization matches its source
         if: matrix.shard == 0

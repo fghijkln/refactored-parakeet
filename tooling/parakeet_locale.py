@@ -44,10 +44,16 @@ def blank_arb(path):
         names = list((meta.get("placeholders") or {}).keys())
         data[key] = " ".join("{%s}" % p for p in names)
         n += 1
+    # The APK is Parakeet: user-visible text names it so (keys and placeholders untouched).
+    renamed = 0
+    for key in list(data):
+        if not key.startswith("@") and isinstance(data[key], str) and "DSH Go" in data[key]:
+            data[key] = data[key].replace("DSH Go", "Parakeet")
+            renamed += 1
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
         f.write("\n")
-    print("blanked %d removed-feature strings in %s" % (n, os.path.relpath(path, ROOT)))
+    print("blanked %d removed-feature strings, renamed DSH Go in %d in %s" % (n, renamed, os.path.relpath(path, ROOT)))
 
 
 def merge_android(res):
@@ -73,6 +79,14 @@ def merge_android(res):
                     base.getroot().append(e)
             base.write(dst, encoding="utf-8", xml_declaration=True)
             print("merged values-zh/%s into values/" % name)
+    values = os.path.join(res, "values")
+    for name in sorted(os.listdir(values)):
+        path = os.path.join(values, name)
+        if name.endswith(".xml"):
+            text = open(path, encoding="utf-8").read()
+            if "DSH Go" in text:
+                open(path, "w", encoding="utf-8").write(text.replace("DSH Go", "Parakeet"))
+                print("renamed DSH Go in res/values/%s" % name)
     for name in os.listdir(res):
         if re.match(r"^values(-night)?(-v\d+)?-zh", name) or name.startswith("values-zh"):
             shutil.rmtree(os.path.join(res, name))

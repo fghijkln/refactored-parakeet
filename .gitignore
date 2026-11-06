@@ -33,3 +33,6 @@ site/build/
 
 # Release assets (tooling/release_assets.py)
 /dist/
+# dsh-Go's golden images are fetched by tooling/fetch-upstream-goldens.sh, never committed
+# (add a golden Parakeet re-records for its own UI with `git add -f`).
+app/test/**/goldens/*.png
