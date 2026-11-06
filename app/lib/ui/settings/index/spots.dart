@@ -1051,9 +1051,7 @@ abstract final class Spots {
 final _rows = <SettingSpot>[
   Spots.chatTextSize,
   Spots.foldTurns,
-  Spots.language,
   Spots.askAi,
-  Spots.community,
   Spots.addProvider,
   Spots.permissionCurrent,
   Spots.permissionDefault,
@@ -1100,7 +1098,6 @@ final _rows = <SettingSpot>[
   Spots.notifyLive,
   Spots.notifySystem,
   Spots.shareConfig,
-  Spots.usageStats,
   Spots.chatLogUpload,
   Spots.autoStart,
   Spots.autoSafe,
@@ -1114,8 +1111,5 @@ final _rows = <SettingSpot>[
   Spots.parallelCalls,
   Spots.commandTimeout,
   Spots.version,
-  Spots.updateCheck,
-  Spots.updateAuto,
-  Spots.star,
   Spots.licenses,
 ];

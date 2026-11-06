@@ -4,4 +4,4 @@
 
 /// The share host (services/share-worker). A link is
 /// `$shareHostOrigin/c/<id>#k=<key>`; the key never reaches the server.
-const shareHostOrigin = 'https://go.dshtui.com';
+const shareHostOrigin = 'https://parakeet.invalid';

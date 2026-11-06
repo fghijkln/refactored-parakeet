@@ -6,7 +6,6 @@ import '../common/fade_in.dart';
 import '../shell/brand_mark.dart';
 import '../theme/theme.dart';
 import 'onboarding_scaffold.dart';
-import 'usage_notice_row.dart';
 
 /// First screen on a fresh install: mostly empty space, the brand mark easing
 /// in, one sentence and one button. Over the button, the one thing everyone
@@ -50,7 +49,6 @@ class WelcomePage extends StatelessWidget {
           ),
         ),
         const Spacer(flex: 6),
-        const FadeSlideIn(delay: Duration(milliseconds: 280), child: UsageNoticeRow()),
         const SizedBox(height: 20),
         FadeSlideIn(
           delay: const Duration(milliseconds: 320),

@@ -24,7 +24,7 @@ class DownloadProgress {
   final int received;
   final int? total;
 
-  /// Mirror label ("GitHub", "ghfast.top").
+  /// Mirror label ("GitHub", "parakeet.invalid").
   final String source;
 }
 

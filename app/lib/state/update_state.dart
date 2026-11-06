@@ -379,6 +379,12 @@ class AppUpdateController extends Notifier<AppUpdateState> {
   /// The launch check: runs only when enabled and due ([isAutoCheckDue]).
   /// True when the caller should offer the update (newer and not skipped).
   Future<bool> autoCheckIfDue() async {
+    // Parakeet: no update checks against upstream servers.
+    return false;
+  }
+
+  // ignore: unused_element
+  Future<bool> _upstreamAutoCheckIfDue() async {
     await ready;
     final prefs = _prefs;
     if (!ref.mounted || prefs == null || !state.autoCheck || state.busy) return false;
@@ -395,6 +401,12 @@ class AppUpdateController extends Notifier<AppUpdateState> {
   /// Asks the sources for the latest release. Concurrent calls share one check;
   /// a running download keeps its release.
   Future<UpdateCheckPhase> check() async {
+    // Parakeet: no update checks against upstream servers.
+    return UpdateCheckPhase.idle;
+  }
+
+  // ignore: unused_element
+  Future<UpdateCheckPhase> _upstreamCheck() async {
     await ready;
     if (!ref.mounted) return UpdateCheckPhase.idle;
     if (state.busy) return state.check;

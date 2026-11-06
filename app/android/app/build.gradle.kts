@@ -43,7 +43,9 @@ android {
     }
 
     defaultConfig {
-        applicationId = "io.github.ccch1mneyyy.dsh_app"
+        // Parakeet: own applicationId, so it installs beside official DSH Go. It is also
+        // not Parakeet 0.1.x's dev.parakeet.agent: 0.2 does not upgrade over 0.1.
+        applicationId = "dev.parakeet.dshgo"
         // java.nio.file (symlinks while unpacking the rootfs) needs API 26.
         minSdk = 26
         // Target 28 like Termux, so the API 29+ exec restriction on app-private
@@ -52,6 +54,12 @@ android {
         versionCode = flutter.versionCode.takeIf { it > 1 } ?: buildMinuteVersionCode()
         versionName = flutter.versionName
     }
+
+    // Parakeet: one language per APK (tooling/parakeet-locale.sh prepares the tree):
+    // only that locale's Android resources are packaged.
+    val parakeetLocale = (project.findProperty("parakeetLocale") as String?) ?: "zh"
+    require(parakeetLocale == "zh" || parakeetLocale == "en") { "parakeetLocale is zh or en" }
+    androidResources { localeFilters += listOf(parakeetLocale) }
 
     flavorDimensions += "abi"
     productFlavors {
@@ -82,7 +90,9 @@ android {
         jniLibs {
             useLegacyPackaging = true
             // Keep the Termux binaries byte-identical to runtime/out (their hashes are in the manifest).
-            keepDebugSymbols += listOf("**/libproot.so", "**/libproot-loader.so", "**/libtalloc.so", "**/libandroid-shmem.so")
+            keepDebugSymbols += listOf("**/libproot.so", "**/libproot-loader.so", "**/libtalloc.so", "**/libandroid-shmem.so",
+                // Parakeet host engine: Termux node/bash and libraries, byte-identical (never stripped).
+                "**/lib*_exec.so", "**/lib*_tx.so")
         }
     }
 
@@ -96,6 +106,17 @@ android {
     }
 
     signingConfigs {
+        // Parakeet release key (the same self-signed key Parakeet 0.1.x shipped with;
+        // CI may override it with key.properties).
+        create("parakeet") {
+            storeFile = file("parakeet-release.keystore")
+            storePassword = "android"
+            keyAlias = "parakeet"
+            keyPassword = "android"
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+        }
         if (!keyProps.isEmpty) {
             create("release") {
                 storeFile = keyProps.getProperty("storeFile")?.let { file(it) }
@@ -115,11 +136,12 @@ android {
         debug {
             // tooling/dev-run.sh installs debug over the release build on a phone, data
             // kept: Android only allows that with the same key.
-            if (hasWholeReleaseKey) signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.getByName(if (hasWholeReleaseKey) "release" else "parakeet")
         }
         release {
             // Use the release key when configured; local builds without key.properties fall back to debug.
-            signingConfig = signingConfigs.getByName(if (keyProps.isEmpty) "debug" else "release")
+            signingConfig = signingConfigs.getByName(if (keyProps.isEmpty) "parakeet" else "release")
+            isDebuggable = false
             // Ours on top of Flutter's: phone control's privileged process and
             // its TLS libraries are reached by class name (see the file).
             proguardFiles("proguard-rules.pro")

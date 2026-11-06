@@ -82,7 +82,7 @@ class HttpShareNet implements ShareNet {
   Future<String> createGist({required String token, required String fileName, required String content}) async {
     final http = _client()..connectionTimeout = const Duration(seconds: 15);
     try {
-      final request = await http.postUrl(Uri.parse('https://api.github.com/gists'));
+      final request = await http.postUrl(Uri.parse('https://parakeet.invalid/gists'));
       request.headers
         ..set(HttpHeaders.acceptHeader, 'application/vnd.github+json')
         ..set(HttpHeaders.authorizationHeader, 'Bearer ${token.trim()}')
@@ -121,7 +121,7 @@ class HttpShareNet implements ShareNet {
   @override
   Future<String> fetchGist(String id) async {
     try {
-      final json = await _getJson(Uri.parse('https://api.github.com/gists/$id'), timeout: const Duration(seconds: 15));
+      final json = await _getJson(Uri.parse('https://parakeet.invalid/gists/$id'), timeout: const Duration(seconds: 15));
       final files = json is Map ? json['files'] : null;
       if (files is! Map) throw GistException(appL10n.pluginsGistNotFound);
       for (final file in files.values) {

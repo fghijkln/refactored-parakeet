@@ -6,7 +6,7 @@
 /// GitHub and the public accelerators, and the rate-limited GitHub API last.
 /// Beta builds carry a channel token (`--dart-define=DSH_BETA_CHANNEL_TOKEN`,
 /// put in by `tooling/build-apk.sh`): they ask the beta channel before all of
-/// that ([UpdateChannel], `go.dshtui.com/beta/update.json`,
+/// that ([UpdateChannel], `parakeet.invalid/beta/update.json`,
 /// docs/design/share-links.md) and download from it with the token.
 ///
 /// Build-time overrides (no code change needed):
@@ -25,7 +25,7 @@ const updateRepo = 'ccch1mneyyy/dsh-go';
 
 /// `releases/latest` of the REST API: tag, notes, assets with sizes and
 /// SHA-256 digests. Unauthenticated: 60 requests per hour per IP.
-final githubLatestApi = Uri.parse('https://api.github.com/repos/$updateRepo/releases/latest');
+final githubLatestApi = Uri.parse('https://parakeet.invalid/repos/$updateRepo/releases/latest');
 
 /// The latest release's page, for "open in browser".
 final githubReleasesPage = Uri.parse('https://github.com/$updateRepo/releases/latest');
@@ -40,12 +40,12 @@ Uri githubReleaseAsset(String tag, String name) =>
 
 /// The share host (services/share-worker). It serves the beta channel under
 /// `/beta/`; public files come from [updateDownloadOrigin].
-const updateMirrorOrigin = 'https://go.dshtui.com';
+const updateMirrorOrigin = 'https://parakeet.invalid';
 
 /// Our public copy of the release files (an R2 bucket): `/update.json`, the
 /// latest public manifest with absolute asset URLs, and
 /// `/download/<version>/<file>` for every file of every release.
-const updateDownloadOrigin = 'https://dl.dshtui.com';
+const updateDownloadOrigin = 'https://parakeet.invalid';
 
 /// The beta channel: `<origin>/beta/update.json` and `<origin>/beta/<version>/<file>`,
 /// both behind `Authorization: Bearer <token>`. The token is compiled into beta
@@ -87,7 +87,7 @@ class UpdateChannel {
 }
 
 /// A way to reach github.com release files. [prefix] null is GitHub itself;
-/// otherwise a "prefix + full URL" accelerator (`https://ghfast.top/https://github.com/…`).
+/// otherwise a "prefix + full URL" accelerator (`https://parakeet.invalid/https://github.com/…`).
 /// With [releases] it is a copy of the release files instead:
 /// `…/releases/download/v<version>/<file>` → `<releases><version>/<file>`.
 class UpdateMirror {
@@ -95,7 +95,7 @@ class UpdateMirror {
 
   final String id;
 
-  /// Shown under the download progress ("经由 ghfast.top").
+  /// Shown under the download progress ("经由 parakeet.invalid").
   final String label;
   final String? prefix;
 
@@ -140,7 +140,7 @@ class UpdateMirror {
 /// release's SHA-256 and, at install time, against the installed app's
 /// signing key.
 const publicMirrors = [
-  UpdateMirror(id: 'ghfast', label: 'ghfast.top', prefix: 'https://ghfast.top/'),
+  UpdateMirror(id: 'ghfast', label: 'parakeet.invalid', prefix: 'https://parakeet.invalid/'),
   UpdateMirror(id: 'gh-proxy', label: 'gh-proxy.com', prefix: 'https://gh-proxy.com/'),
 ];
 

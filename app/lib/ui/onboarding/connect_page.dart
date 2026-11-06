@@ -240,35 +240,20 @@ class _Choose extends StatelessWidget {
     final l10n = context.l10n;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final colors = DshColors.of(context);
-    final unsupported = state.phase == AccountPhase.unsupported;
     return OnboardingScaffold(
       children: [
         const Spacer(),
+        // Parakeet: no DeepSeek account sign-in; the user's own API key (DeepSeek or any
+        // OpenAI-compatible / Anthropic provider) is the only way in, kept on the device.
         OnboardingHeader(
-          icon: AppIcons.account,
-          title: l10n.shellConnectDeepSeek,
-          message: l10n.shellConnectDeepSeekMessage,
+          icon: AppIcons.apiKey,
+          title: l10n.shellUseApiKey,
+          message: l10n.hubSettingsApiKeyHint,
         ),
-        const SizedBox(height: 28),
-        const AccountFacts(),
-        if (state.failure case final failure?) ...[const SizedBox(height: 16), SignInFailureCard(failure: failure)],
         const Spacer(flex: 2),
         const SizedBox(height: 24),
-        if (unsupported)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Text(
-              l10n.shellAccountSignInUnsupported,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall?.copyWith(color: colors.warning),
-            ),
-          )
-        else ...[
-          FilledButton(onPressed: onSignIn, child: Text(l10n.shellSignInDeepSeek)),
-          const SizedBox(height: 10),
-        ],
-        OutlinedButton(onPressed: onApiKey, child: Text(l10n.shellUseApiKey)),
+        FilledButton(onPressed: onApiKey, child: Text(l10n.shellUseApiKey)),
+        const SizedBox(height: 10),
         const SizedBox(height: 6),
         // Two equal halves: the quieter ways on.
         Row(

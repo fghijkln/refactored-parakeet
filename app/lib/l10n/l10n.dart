@@ -9,6 +9,7 @@
 
 import 'package:flutter/widgets.dart';
 
+import '../parakeet/build_locale.dart';
 import 'gen/app_localizations.dart';
 
 export 'gen/app_localizations.dart';
@@ -19,12 +20,15 @@ abstract final class AppLocale {
   static const zhCN = Locale('zh', 'CN');
   static const en = Locale('en');
 
-  /// Locales MaterialApp offers. zh_CN (not bare zh) keeps CJK glyphs
-  /// Chinese on non-Chinese systems (typography.dart「汉字字形」).
-  static const supported = [zhCN, en];
+  /// Parakeet: the one locale this APK was built with (see build_locale.dart).
+  static const Locale build = parakeetLocale == 'en' ? en : zhCN;
 
-  static Locale _locale = zhCN;
-  static L10n _l10n = lookupL10n(zhCN);
+  /// Locales MaterialApp offers: only the build's language. zh_CN (not bare
+  /// zh) keeps CJK glyphs Chinese on non-Chinese systems.
+  static const supported = [build];
+
+  static Locale _locale = build;
+  static L10n _l10n = lookupL10n(build);
 
   /// The locale in use (zh_CN until the app resolves one; tests keep it).
   static Locale get current => _locale;
@@ -35,21 +39,15 @@ abstract final class AppLocale {
 
   /// Switches [appL10n] to [locale] (zh_CN or en).
   static void use(Locale locale) {
-    final next = locale.languageCode == 'en' ? en : zhCN;
+    const next = build;
     if (next == _locale) return;
     _locale = next;
     _l10n = lookupL10n(next);
   }
 
   /// Chinese for any Chinese system language, English for everything else.
-  static Locale resolve(Locale? chosen, List<Locale>? system) {
-    if (chosen != null) return chosen.languageCode == 'en' ? en : zhCN;
-    for (final l in system ?? const <Locale>[]) {
-      if (l.languageCode == 'zh') return zhCN;
-      if (l.languageCode == 'en') return en;
-    }
-    return (system == null || system.isEmpty) ? zhCN : en;
-  }
+  /// Parakeet: always the build's language, whatever the system or a stale choice says.
+  static Locale resolve(Locale? chosen, List<Locale>? system) => build;
 }
 
 /// UI text for code without a BuildContext. Follows the app language.

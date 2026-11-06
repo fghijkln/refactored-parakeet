@@ -31,7 +31,6 @@ import '../engine/engine_status.dart';
 import '../engine_settings/engine_settings_hub.dart';
 import '../engine_settings/web_search_page.dart';
 import 'media_settings_page.dart';
-import '../features/feature_catalog.dart' show communityPage;
 import '../features/feature_format.dart' show permissionName;
 import '../features/permission_page.dart';
 import '../onboarding/api_key_page.dart' show maskApiKey;
@@ -53,7 +52,6 @@ import 'appearance/appearance_page.dart';
 import 'background_guide_page.dart';
 import 'diagnostics_page.dart';
 import 'interface_page.dart';
-import 'language_tile.dart';
 import 'notification_settings.dart';
 import 'performance_page.dart';
 import 'personalization_page.dart';
@@ -234,7 +232,6 @@ class SettingsScreen extends ConsumerWidget {
               value: Text(uiMode.label),
               onTap: () => _push(context, const InterfacePage()),
             ),
-            const LanguageSettingsTile(tint: SettingsHues.general),
             const NotificationSettingsTile(tint: SettingsHues.general),
             const VoiceSettingsTile(tint: SettingsHues.general),
             const PerformanceSettingsTile(tint: SettingsHues.general),
@@ -300,12 +297,6 @@ class SettingsScreen extends ConsumerWidget {
                 value: Text(l10n.askAiTooltip),
                 onTap: () => unawaited(askAi(context, AskAiTopic.overview)),
               ),
-            SettingsTile(
-              icon: AppIcons.community,
-              tint: SettingsHues.help,
-              spot: Spots.community,
-              onTap: () => _push(context, communityPage()),
-            ),
             SettingsTile(
               icon: AppIcons.diagnostics,
               tint: SettingsHues.help,
@@ -443,8 +434,9 @@ class _SettingsOverviewState extends ConsumerState<SettingsOverview> {
         subtitle = l10n.hubSettingsApiKeyHint;
       case AccountPhase.signedOut || AccountPhase.unknown:
         leading = const OverviewGlyph(AppIcons.apiKey);
-        title = l10n.hubSettingsSignInAccount;
-        subtitle = l10n.hubSettingsOrApiKey;
+        // Parakeet: no DeepSeek account sign-in.
+        title = l10n.hubSettingsNoApiKey;
+        subtitle = l10n.hubSettingsApiKeyHint;
     }
     final dsh = runtime.status.dshVersion;
     // The card is 账号's way in (its title is whoever is signed in).

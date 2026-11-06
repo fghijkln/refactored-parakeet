@@ -94,6 +94,33 @@ object GuestSetup {
         return file
     }
 
+    // Parakeet host engine: what the agent should know about its world (one language per APK).
+    // l10n:keep agent prompt
+    private val HOST_AGENTS_ZH = """
+        |<!-- dsh-app:managed — 删除这一行后，Parakeet 不再覆盖本文件 -->
+        |# 运行环境（Parakeet）
+        |
+        |- 你直接运行在这台 Android 手机上（没有容器、没有 PRoot、没有 Ubuntu）：Node 与 bash 来自 App 自带的 Termux 构建，系统命令（ls、cat、getprop、pm、am、settings…）来自 Android 的 /system/bin。没有 apt，也没有 python，除非用户自己装了。
+        |- `/root`、`/tmp`、`/opt` 是 App 私有目录里的运行环境；`/system`、`/data`、`/sdcard`、`/storage`、`/proc` 等就是手机本身的路径。默认工作目录是 `/root/workspace`。{STORAGE_LINE}
+        |- 沙箱后端不可用：需要执行命令时直接用 `sandbox_permissions: "danger-full-access"` 申请，写一句理由。
+        |- 需要 root 时用 `root_status` 检查、用 `root_shell` 执行（经 su，支持 KernelSU 与 Magisk）。root 命令默认需要用户确认；写块设备、dd 到分区、mkfs、fastboot、删除系统或用户数据这类可能变砖的命令永远需要确认，事先说清后果。
+        |- 已预装 node / pnpm；npm 包用 pnpm 安装。
+        |- 手机屏幕小：回复尽量简洁，代码块不要太宽。
+        |""".trimMargin()
+
+    // l10n:keep agent prompt
+    private val HOST_AGENTS_EN = """
+        |<!-- dsh-app:managed — delete this line and Parakeet stops rewriting this file -->
+        |# Environment (Parakeet)
+        |
+        |- You run directly on this Android phone (no container, no PRoot, no Ubuntu): node and bash are the app's bundled Termux builds; system commands (ls, cat, getprop, pm, am, settings, ...) come from Android's /system/bin. There is no apt and no python unless the user installed them.
+        |- `/root`, `/tmp` and `/opt` are the runtime inside the app's private storage; `/system`, `/data`, `/sdcard`, `/storage`, `/proc` and the like are the phone's own paths. The default working directory is `/root/workspace`. {STORAGE_LINE}
+        |- No sandbox backend is available: when you need to run a command, request `sandbox_permissions: "danger-full-access"` with a one-line reason.
+        |- For root use `root_status` to check and `root_shell` to run (through su; KernelSU and Magisk work). Root commands ask the user by default; device-bricking commands (writing block devices, dd to partitions, mkfs, fastboot, deleting system or user data) always ask: state the consequences first.
+        |- node and pnpm are installed; install npm packages with pnpm.
+        |- The screen is small: keep replies short and code blocks narrow.
+        |""".trimMargin()
+
     /** Global DSH instructions ($DSH_HOME/AGENTS.md); left alone once the user removes the marker. */
     fun writeAgentsMd(
         rootfs: File,
@@ -101,11 +128,15 @@ object GuestSetup {
         phoneControl: Boolean = false,
         visualReplies: Boolean = true,
         directEngine: Boolean = false,
+        host: Boolean = false,
     ) {
         try {
             val file = File(rootfs, "root/.dsh/AGENTS.md")
             if (file.exists() && !file.readText().startsWith(AGENTS_MARKER)) return
-            val environment = if (directEngine) {
+            val english = io.github.ccch1mneyyy.dsh_app.i18n.BuildLocale.LOCALE == "en"
+            val environment = if (host) {
+                if (english) HOST_AGENTS_EN else HOST_AGENTS_ZH
+            } else if (directEngine) {
                 // l10n:keep agent prompt
                 AGENTS_MD.replace("Ubuntu 24.04 环境里（proot，免 Root）", "Ubuntu 24.04 运行环境里（引擎直接启动，bash/git/python/apt 工具仍经 proot）")
                     .replace("`/root/workspace`", "`${rootfs.canonicalPath}/root/workspace`") +
@@ -113,7 +144,10 @@ object GuestSetup {
             } else AGENTS_MD
             val text = environment.replace(
                 "{STORAGE_LINE}",
-                if (phoneStorage) {
+                if (host && english) {
+                    if (phoneStorage) "The user granted access to phone storage: internal storage is `/sdcard` (photos in `/sdcard/DCIM`, downloads in `/sdcard/Download`). Say so and confirm before changing or deleting user files; put files you make for the user in `/sdcard/Download/Parakeet/`."
+                    else "The phone's photos and downloads need storage access: ask the user to turn on phone file access in the app's settings."
+                } else if (phoneStorage) {
                     // l10n:keep agent prompt
                     "用户已授权访问手机存储：手机内部存储挂载在 `/sdcard`（`/root/手机存储` 是它的快捷方式；相册在 `/sdcard/DCIM`，下载在 `/sdcard/Download`）。改动或删除用户文件前先说明并确认；给用户的产出文件放到 `/sdcard/Download/DSH-Go/`。"
                 } else {
@@ -124,7 +158,7 @@ object GuestSetup {
                 (if (phoneControl) PhoneGuest.AGENTS_SECTION else "") +
                 DIAGNOSTICS_SECTION.replace(
                     "{PATH}",
-                    if (directEngine) "${rootfs.canonicalPath}/root/.dsh/dsh-app/diagnostics.md"
+                    if (directEngine && !host) "${rootfs.canonicalPath}/root/.dsh/dsh-app/diagnostics.md"
                     else "\$DSH_HOME/dsh-app/diagnostics.md",
                 )
             file.parentFile?.mkdirs()

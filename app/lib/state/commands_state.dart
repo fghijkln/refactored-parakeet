@@ -104,17 +104,12 @@ Map<String, ({String name, String label, String description, String? hint})> get
     description: appL10n.stateCommandGoalDescription,
     hint: appL10n.stateCommandGoalHint,
   ),
-  '@deepseek-ai/dsh-command-feedback': (
-    name: 'feedback',
-    label: appL10n.stateFeedbackLabel,
-    description: appL10n.stateCommandFeedbackDescription,
-    hint: appL10n.stateCommandFeedbackHint,
-  ),
+  // Parakeet: /feedback removed (its engine row is disabled too).
 };
 
 /// The Host's `/export` asks for a browser download the app can't receive;
 /// the app's own `/export` ([appSlashCommands]) fetches the ZIP instead.
-const _hiddenCommands = {'export'};
+const _hiddenCommands = {'export', 'feedback'};
 
 /// Palette order: app commands, then the first-party ones in this order,
 /// then anything else in catalog order.

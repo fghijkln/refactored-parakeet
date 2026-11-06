@@ -222,7 +222,8 @@ class UsageStatsController extends Notifier<UsageStatsState> {
 
   /// Sends the days that are due, oldest first, one request each; stops at
   /// the first failure (and for the day at a 404). Only one run at a time.
-  Future<void> send() => _sending ??= _send().whenComplete(() => _sending = null);
+  /// Parakeet: anonymous usage statistics are removed; nothing is ever sent.
+  Future<void> send() async {}
 
   Future<void> _send() async {
     if (!UsageBuild.active || !ref.mounted || !state.collecting) return;

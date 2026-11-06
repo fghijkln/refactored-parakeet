@@ -1,7 +1,7 @@
 // Hosted conversation links opened in the app.
-// `https://go.dshtui.com/c/<id>#k=<key>` — an App Link, shared text
+// `https://parakeet.invalid/c/<id>#k=<key>` — an App Link, shared text
 // (lib/links/share_intake.dart → the link router) or the web viewer's
-// `dshgo://go.dshtui.com/c/…` — is fetched, decrypted on the phone and opened
+// `dshgo://parakeet.invalid/c/…` — is fetched, decrypted on the phone and opened
 // in the replay page.
 
 import 'dart:async';

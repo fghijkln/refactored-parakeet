@@ -32,7 +32,7 @@ import 'hosts_state.dart';
 /// the relay.
 
 /// Default market: dshfind's format-1 index (attribution "数据来自 dshfind").
-const dshfindIndexUrl = 'https://api.dshfind.com/market/dsh-index.json';
+const dshfindIndexUrl = 'https://parakeet.invalid/market/dsh-index.json';
 
 /// Profile `dsh web` runs with; the app starts every host it drives that way.
 const pluginProfile = 'web';
@@ -230,11 +230,11 @@ final marketCatalogProvider = FutureProvider<MarketCatalog>((ref) async {
 /// one pinned version per plugin, and the DSH Go sidecar (`dsh-go.json`)
 /// beside it, read from [officialMarketBases]. Wherever it was read, the
 /// index is the Worker's (this URL resolves its links).
-const officialIndexUrl = 'https://go.dshtui.com/market/index.json';
+const officialIndexUrl = 'https://parakeet.invalid/market/index.json';
 
 /// Where both files are read, in turn: the public bucket the Worker's cron
 /// writes (no Worker request), then the Worker.
-const officialMarketBases = ['https://dl.dshtui.com/market/', 'https://go.dshtui.com/market/'];
+const officialMarketBases = ['https://parakeet.invalid/market/', 'https://parakeet.invalid/market/'];
 
 /// How long the copy on the phone is used without asking the server.
 const officialMarketFresh = Duration(hours: 6);
@@ -341,7 +341,7 @@ Future<MarketCatalog> fetchOfficialMarket({MarketFileFetcher get = fetchMarketFi
   }
   if (copy != null) return _officialCatalog(copy.index, parseMarketSidecarText(copy.sidecar));
   if (_notPublished(failure)) {
-    return MarketCatalog(MarketIndex(url: Uri.parse(officialIndexUrl), title: LocalizedText.plain('go.dshtui.com')));
+    return MarketCatalog(MarketIndex(url: Uri.parse(officialIndexUrl), title: LocalizedText.plain('parakeet.invalid')));
   }
   throw failure!;
 }

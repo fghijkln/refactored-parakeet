@@ -12,6 +12,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+
+import '../../parakeet/build_locale.dart' show parakeetNoHostedShare;
 import 'package:flutter/services.dart';
 
 import '../../l10n/l10n.dart';
@@ -111,7 +113,7 @@ class SharePanelHome extends StatelessWidget {
     final destinations = ShareActionRow(
       key: const ValueKey('share-destinations'),
       actions: [
-        if (model.linkMaker != null)
+        if (model.linkMaker != null && !parakeetNoHostedShare)
           ShareAction(
             key: const ValueKey('share-to-link'),
             icon: AppIcons.link,
@@ -312,7 +314,7 @@ class _FileTile extends StatelessWidget {
 /// ‹ 链接
 /// (  7 天  (( 30 天 ))  永久  )
 /// 🔒 端到端加密，服务器看不到内容
-/// ┌ 🔗 go.dshtui.com/c/a1B2c3D4e5 · 11 月 24 日到期 ┐
+/// ┌ 🔗 parakeet.invalid/c/a1B2c3D4e5 · 11 月 24 日到期 ┐
 /// (复制链接) (二维码) (分享) (停止分享)       or  [ 生成链接 ]
 ///               我的分享链接
 /// ```

@@ -151,7 +151,7 @@ class ConversationLink {
   /// The share host's id, for [ConversationLinkMaker.revoke].
   final String? id;
 
-  /// `go.dshtui.com/c/a1B2c3D4e5`: the link without its scheme and key.
+  /// `parakeet.invalid/c/a1B2c3D4e5`: the link without its scheme and key.
   String get display => '${url.host}${url.path}';
 }
 

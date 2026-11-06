@@ -18,7 +18,7 @@ import 'usage_ledger.dart';
 const _endpointOverride = String.fromEnvironment('DSH_USAGE_ENDPOINT');
 
 /// The share host's endpoint (services/share-worker), contract v1.
-final defaultUsageEndpoint = Uri.parse('https://go.dshtui.com/api/usage/v1');
+final defaultUsageEndpoint = Uri.parse('https://parakeet.invalid/api/usage/v1');
 
 /// [defaultUsageEndpoint], or the build's override when it is usable.
 Uri get usageEndpoint => usageEndpointFrom(_endpointOverride) ?? defaultUsageEndpoint;

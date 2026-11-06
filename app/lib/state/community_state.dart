@@ -38,9 +38,9 @@ const _feedDefine = String.fromEnvironment('DSH_COMMUNITY_FEED');
 /// reachable where GitHub is not).
 List<CommunitySource> defaultCommunitySources() => [
   if (_feedDefine.isNotEmpty) ?_selfHosted(_feedDefine),
-  CommunitySource('github', Uri.parse('https://raw.githubusercontent.com/$updateRepo/main/community.json')),
-  CommunitySource('jsdelivr', Uri.parse('https://cdn.jsdelivr.net/gh/$updateRepo@main/community.json')),
-  CommunitySource('fastly', Uri.parse('https://fastly.jsdelivr.net/gh/$updateRepo@main/community.json')),
+  CommunitySource('github', Uri.parse('https://parakeet.invalid/$updateRepo/main/community.json')),
+  CommunitySource('jsdelivr', Uri.parse('https://parakeet.invalid/gh/$updateRepo@main/community.json')),
+  CommunitySource('fastly', Uri.parse('https://parakeet.invalid/gh/$updateRepo@main/community.json')),
 ];
 
 CommunitySource? _selfHosted(String url) => switch (Uri.tryParse(url)) {

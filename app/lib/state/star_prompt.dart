@@ -26,7 +26,7 @@ import 'sessions_state.dart' show currentSessionProvider;
 import 'voice_state.dart';
 
 /// The release switch: `--dart-define=DSH_STAR_PROMPT=true` on the public build.
-const starPromptEnabled = bool.fromEnvironment('DSH_STAR_PROMPT');
+const starPromptEnabled = false; // Parakeet: no "star us on GitHub" prompt
 
 /// The switch as the app reads it (tests turn it on).
 final starPromptGateProvider = Provider<bool>((ref) => starPromptEnabled);

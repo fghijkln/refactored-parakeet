@@ -121,26 +121,8 @@ class _AccountPageState extends ConsumerState<AccountPage> {
         if (state.signedIn)
           GlassIconButton(icon: AppIcons.refresh, tooltip: l10n.engineAccountRefresh, onPressed: _refresh),
       ],
-      children: [
-        AnimatedSwitcher(
-          duration: AppMotion.of(context, AppMotion.standard),
-          switchInCurve: AppMotion.enter,
-          switchOutCurve: AppMotion.exit,
-          child: KeyedSubtree(
-            key: ValueKey(state.phase),
-            child: switch (state.phase) {
-              AccountPhase.signedIn => _SignedInView(
-                state: state,
-                onTopUp: () => _openPlatform(state.links?.topUpUrl),
-                onUsage: () => _openPlatform(state.links?.usageUrl),
-                onSignOut: _confirmSignOut,
-              ),
-              AccountPhase.signingIn => _SigningInView(state: state),
-              _ => _SignedOutView(state: state, onSignIn: _signIn),
-            },
-          ),
-        ),
-      ],
+      // Parakeet: no DeepSeek account sign-in; only the API key kept on this device.
+      children: const [SizedBox(height: 8), ApiKeySection()],
     );
   }
 }

@@ -63,6 +63,9 @@ class DshProcess(
     var direct: Boolean = false
         private set
 
+    /** Parakeet host engine: the runtime has no PRoot/Ubuntu; always direct on Android ([HostLaunch]). */
+    val host: Boolean = HostLaunch.isHost(manifest.raw.optString("engine", "proot"))
+
     val launchDiagnostics = LaunchDiagnostics()
     val executionMode: String? get() = launchDiagnostics.currentMode(process?.isAlive == true)
 
@@ -75,12 +78,12 @@ class DshProcess(
      */
     fun start(guestEnv: Map<String, String>, binds: List<String> = emptyList(), safe: Boolean = false, phone: Boolean = false, directEngine: Boolean = false, directFailed: Boolean = false, onLaunchMethod: ((Boolean) -> Unit)? = null) {
         check(process == null) { "already started" }
-        var selection = DirectLaunch.select(rootfs, directEngine, safe, directFailed)
+        var selection = if (host) DirectLaunch.Selection(true) else DirectLaunch.select(rootfs, directEngine, safe, directFailed)
         // Only PRoot's fake hard links stand in Direct's way: tidy them once no runtime process is left.
-        val tidy = selection.fallbackReason == DirectLaunch.INCOMPATIBLE
+        val tidy = !host && selection.fallbackReason == DirectLaunch.INCOMPATIBLE
         val cleanup = reapStrays(allowObservationGap = !selection.direct && !tidy)
         if (tidy && cleanup.complete) selection = tidyLinks(binds)
-        directFallbackReason = selection.fallbackReason ?: if (directEngine && safe) "safeRecovery" else null
+        directFallbackReason = selection.fallbackReason ?: if (!host && directEngine && safe) "safeRecovery" else null
         launchDiagnostics.selected(selection.direct, directFallbackReason)
         direct = selection.direct
         check(cleanup.complete || (!direct && !cleanup.ownedRemaining)) { "runtime cleanup incomplete; stop the engine and retry" }
@@ -120,7 +123,8 @@ class DshProcess(
         // Subscription sign-in: the same rule for the auth bridge overlay.
         var authPending = !safe && AppAuthGuest.file(rootfs).isFile
         // On-device voice input: the recognizer's phone settings, same rule.
-        var speechPending = !safe && SpeechGuest.file(rootfs).isFile
+        // The host engine ships no sherpa-onnx addon (glibc-only): no on-device recognizer overlay.
+        var speechPending = !host && !safe && SpeechGuest.file(rootfs).isFile
         for (arg in launchArgv) {
             if (!bindsPlaced && arg == "/usr/bin/env") {
                 allBinds.forEach { argv += "-b"; argv += it }
@@ -157,7 +161,18 @@ class DshProcess(
         env["PROOT_TMP_DIR"] = tmp.absolutePath
         manifest.launchEnv.forEach { (k, v) -> env[k] = expand(v) }
         if (!guestEnvPlaced) env.putAll(effectiveGuestEnv)
-        if (direct) {
+        if (host) {
+            val nativeDir = File(context.applicationInfo.nativeLibraryDir)
+            HostLaunch.unavailable(rootfs, nativeDir)?.let { error("host engine: $it") }
+            val links = TermuxLibs.ensure(context)
+            val compileCache = File(context.cacheDir, "node-compile-cache").apply { mkdirs() }
+            env["NODE_COMPILE_CACHE"] = compileCache.absolutePath
+            val plan = HostLaunch.prepare(rootfs, nativeDir, links, argv, env.toMap(),
+                extraNodeFlags = listOf("--max-old-space-size=${heapLimitMb()}"))
+            builder.command(plan.argv).directory(plan.cwd)
+            env.clear()
+            env.putAll(plan.environment)
+        } else if (direct) {
             val plan = DirectLaunch.prepare(rootfs, manifest.abi, argv, env.toMap())
             builder.command(plan.argv).directory(plan.cwd)
             env.clear()
@@ -167,7 +182,7 @@ class DshProcess(
         readyReported = false
         if (directFallbackReason == DirectLaunch.INCOMPATIBLE) listener.onLog("[dsh-app] direct fallback: proot hard-link backing files need compatible launch; user preference and data retained", "system")
         if (directFallbackReason == DirectLaunch.FAILED) listener.onLog("[dsh-app] direct fallback: direct launch failed before with this runtime; turn Direct on again to retry", "system")
-        listener.onLog("[dsh-app] launch method: ${if (direct) "direct-glibc" else "proot"}${if (directEngine && safe) " (safe recovery)" else ""}", "system")
+        listener.onLog("[dsh-app] launch method: ${if (host) "host (parakeet, no container)" else if (direct) "direct-glibc" else "proot"}${if (directEngine && safe) " (safe recovery)" else ""}", "system")
         listener.onLog("[dsh-app] launching ${builder.command().joinToString(" ") { redact(it) }}", "system")
         // stop() came in while this was being prepared: don't launch at all.
         if (stopping) {
@@ -243,6 +258,14 @@ class DshProcess(
     }
 
     /** Waits for cleanup and exit reporting; zero waits until completion. */
+    /** V8 old-space cap from device RAM: a quarter, clamped to 768..2048 MB (Parakeet 0.1.1). */
+    private fun heapLimitMb(): Int {
+        val am = context.getSystemService(android.app.ActivityManager::class.java)
+        val mi = android.app.ActivityManager.MemoryInfo()
+        val total = runCatching { am.getMemoryInfo(mi); mi.totalMem }.getOrDefault(0L)
+        return if (total <= 0) 1024 else (total / (1024L * 1024L) / 4).toInt().coerceIn(768, 2048)
+    }
+
     fun awaitExit(millis: Long = 0): Boolean {
         // The waiter joins the stopper before reporting exit. Startup can fail
         // after spawning but before allocating it, so await the stopper then.

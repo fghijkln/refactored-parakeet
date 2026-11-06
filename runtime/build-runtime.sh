@@ -445,6 +445,88 @@ PYEOF
   log "$abi done: $(du -h "$archive" | cut -f1) archive, version $runtime_version"
 }
 
+# ---------------------------------------------------------------------------
+# Parakeet host engine (default): no PRoot, no Ubuntu, no glibc Node. Termux's
+# Bionic node + bash ship unmodified as jniLibs (runtime/host/fetch_termux.py);
+# the runtime archive holds only the patched DSH tree, pnpm, dsh-go-bridge, the
+# Parakeet root-shell plugin and dsh-Go's overlay files. One archive per language
+# (runtime/out-zh, runtime/out-en): only that language's DSH locale files.
+# ---------------------------------------------------------------------------
+build_abi_host() {
+  local abi="$1" npm_cpu termux_arch elf_name
+  case "$abi" in
+    arm64-v8a) npm_cpu=arm64; termux_arch=aarch64; elf_name="ARM aarch64" ;;
+    x86_64)    npm_cpu=x64;   termux_arch=x86_64;  elf_name="x86-64" ;;
+    *) die "unknown ABI $abi (use arm64-v8a or x86_64)" ;;
+  esac
+  log "=== $abi (host engine) ==="
+  local work="$WORK/$abi"; mkdir -p "$work"
+  local jni="$work/jniLibs/$abi"; rm -rf "$work/jniLibs"; mkdir -p "$jni"
+  TERMUX_ARCH="$termux_arch" python3 -I "$HERE/host/fetch_termux.py" "$jni" --manifest "$work/termux-manifest.json" >&2
+  local f bad=0
+  for f in "$jni"/*.so; do
+    file -b "$f" | grep -q "$elf_name" || { log "ABI mismatch: $f: $(file -b "$f")"; bad=1; }
+  done
+  [[ "$bad" == 0 ]] || die "ABI verification failed for $abi jniLibs"
+  python3 -I - "$jni" "$work/jnilibs.json" <<'PYEOF'
+import hashlib, json, os, sys
+jni, out = sys.argv[1:3]
+res = {n: {"sha256": hashlib.sha256(open(os.path.join(jni, n), "rb").read()).hexdigest(),
+           "bytes": os.path.getsize(os.path.join(jni, n)), "source": "termux-main (unmodified)"}
+       for n in sorted(os.listdir(jni))}
+json.dump(res, open(out, "w"), indent=2)
+PYEOF
+
+  local prefix="$work/dsh-prefix"
+  install_dsh "$npm_cpu" "$prefix"
+  log "patching DSH (runtime/patches, pinned for $DSH_VERSION)"
+  "${PY[@]}" patch-dsh --prefix "$prefix" --dsh-version "$DSH_VERSION" --patches "$HERE/patches" \
+    --out "$work/dsh-patches.json" >&2
+  log "Bionic fallbacks (flock, require-builtin) for the host engine"
+  "$(host_npm)/node" "$HERE/host/patch_runtime.mjs" "$prefix" >&2
+  local bridge="$HERE/bridge/dsh-go-bridge" bridge_version
+  bridge_version="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$bridge/package.json")"
+  local pnpm_prefix="$work/pnpm-prefix"
+  install_pnpm "$npm_cpu" "$pnpm_prefix"
+  local inputs_sha
+  inputs_sha="$( {
+      echo "host $RUNTIME_REVISION $abi $DSH_VERSION $PNPM_VERSION $COMPRESS $XZ_PRESET $PRUNE_DEV_METADATA $SOURCE_DATE_EPOCH"
+      sha256 "$LOCKS/dsh-$DSH_VERSION/package-lock.json"; sha256 "$HERE/build-runtime.sh"; sha256 "$HERE/lib/rtbuild.py"
+      cat "$work/jnilibs.json"
+      (cd "$HERE" && find patches bridge boot direct host plugins -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum)
+    } | sha256sum | cut -c1-12 )"
+  local runtime_version="parakeet-host-${RUNTIME_REVISION}-dsh${DSH_VERSION}-${inputs_sha}"
+  local node_version
+  node_version="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("packages",{}).get("nodejs-lts","termux"))' "$work/termux-manifest.json" 2>/dev/null || echo termux)"
+  local lang
+  for lang in ${PARAKEET_LOCALES:-zh en}; do
+    local out="$HERE/out-$lang/$abi" assets
+    assets="$out/assets/runtime"
+    rm -rf "$out"; mkdir -p "$assets/licenses" "$out/jniLibs"
+    cp -r "$jni" "$out/jniLibs/"
+    cp "$work/termux-manifest.json" "$assets/termux-manifest.json"
+    local runtime_info
+    runtime_info="$(printf '{"runtimeVersion":"%s","abi":"%s","engine":"host","locale":"%s","dshVersion":"%s","nodeVersion":"%s","pnpmVersion":"%s","dshPatches":%s,"dshGoBridge":"%s"}' \
+      "$runtime_version-$lang" "$abi" "$lang" "$DSH_VERSION" "$node_version" "$PNPM_VERSION" "$(cat "$work/dsh-patches.json")" "$bridge_version")"
+    local -a prune=(); [[ "$PRUNE_DEV_METADATA" == 1 ]] && prune=(--prune-dev-metadata)
+    log "assembling host runtime ($abi, $lang)"
+    "${PY[@]}" assemble --host --abi "$abi" --dsh-prefix "$prefix" --pnpm-prefix "$pnpm_prefix" \
+      --out "$assets/rootfs-$abi.tar.$COMPRESS" --report "$out/build-report.json" --runtime-info "$runtime_info" \
+      --compress "$COMPRESS" --xz-preset "$XZ_PRESET" --threads "$XZ_THREADS" --epoch "$SOURCE_DATE_EPOCH" "${prune[@]}" \
+      --bridge "$bridge" --root-plugin "$HERE/plugins/parakeet-root-shell" --locale "$lang"
+    local versions
+    versions="$(printf '{"runtimeVersion":"%s","dshVersion":"%s","nodeVersion":"%s","pnpmVersion":"%s","dshPatches":%s,"dshGoBridge":"%s","build":{"engine":"host","locale":"%s","inputsSha256_12":"%s","sourceDateEpoch":%s}}' \
+      "$runtime_version-$lang" "$DSH_VERSION" "$node_version" "$PNPM_VERSION" "$(cat "$work/dsh-patches.json")" "$bridge_version" "$lang" "$inputs_sha" "$SOURCE_DATE_EPOCH")"
+    "${PY[@]}" manifest --host --abi "$abi" --report "$out/build-report.json" --jnilibs "$work/jnilibs.json" \
+      --versions "$versions" --out "$assets/manifest.json" >&2
+    cp "$HERE/../LICENSE" "$assets/licenses/AGPL-3.0.txt" 2>/dev/null || true
+    [[ -d "$work/jniLibs/termux-licenses" ]] && cp -r "$work/jniLibs/termux-licenses" "$assets/licenses/termux"
+    log "$abi/$lang done: $(du -h "$assets/rootfs-$abi.tar.$COMPRESS" | cut -f1) archive, version $runtime_version-$lang"
+  done
+  # Keep the plain dsh tree for the Linux smoke test (runtime/tests/host-smoke.sh).
+  printf '%s\n' "$prefix" > "$HERE/out-host-prefix-$abi.txt"
+}
+
 write_index() {
   python3 -I - "$OUT" <<'PYEOF'
 import json, os, sys
@@ -469,6 +551,10 @@ main() {
   [[ ${#abis[@]} -gt 0 ]] || abis=(x86_64 arm64-v8a)
   mkdir -p "$CACHE" "$WORK" "$OUT"
   local abi
+  if [[ "${RUNTIME_ENGINE:-host}" == host ]]; then
+    for abi in "${abis[@]}"; do build_abi_host "$abi"; done
+    return
+  fi
   for abi in "${abis[@]}"; do build_abi "$abi"; done
   write_index
 }

@@ -28,6 +28,25 @@ NPMJS = "https://registry.npmjs.org/"
 DSH_WEB_PATCH = "/etc/dsh-app/dsh-web.patch.yml"
 # Where runtime/bridge/dsh-go-bridge lands in the rootfs (loaded by absolute path from the overlay).
 DSH_GO_BRIDGE = "/opt/dsh-go/dsh-go-bridge"
+# Parakeet: the root_shell/root_status plugin (runtime/plugins/parakeet-root-shell).
+PARAKEET_ROOT_SHELL = "/opt/dsh/node_modules/@parakeet/dsh-plugin-root-shell"  # inside node_modules: its imports resolve
+# Parakeet: DSH rows never mounted in this build (feedback + its session-log
+# upload, DeepSeek account sign-in, product analytics/telemetry). A patch row can
+# only be disabled; `disabled: true` keeps the plugin, routes and browser half out.
+PARAKEET_DISABLED_ROWS = (
+    "message-feedback", "ui-message-feedback", "command-feedback",
+    "session-telemetry-otel", "desktop-product-telemetry", "product-analytics",
+    "deepseek-account", "llm-deepseek-account", "ui-settings-account", "account-controller",
+)
+# Parakeet host engine: DSH addons that cannot load under Android's Bionic libc
+# (glibc/musl prebuilds) and payloads that only those addons or desktop use.
+HOST_DROP_PACKAGES = (
+    "node_modules/@img/", "node_modules/@koromix/", "node_modules/sharp/",
+    "node_modules/sherpa-onnx-", "node_modules/@deepseek-ai/node-addon-system-",
+    "node_modules/node-addon-require-builtin-", "node_modules/node-pty/prebuilds/",
+    "node_modules/@deepseek-ai/libreoffice-kit-wasm/assets/",
+    "node_modules/@deepseek-ai/libreoffice-kit-wasm/sources/",
+)
 # runtime/boot/boot-cache.mjs: path cache for `dsh web` while it boots, preloaded by the dsh shim.
 BOOT_CACHE = "/opt/dsh-go/boot-cache.mjs"
 BOOT_CACHE_SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "boot", "boot-cache.mjs")
@@ -663,6 +682,9 @@ def cmd_deb_extract(args):
 # ---------------------------------------------------------------------------
 # rootfs assembly
 # ---------------------------------------------------------------------------
+_EMPTY_TAR = b"\0" * 1024
+
+
 class Entry:
     __slots__ = ("kind", "mode", "data", "path", "link", "origin")
 
@@ -806,7 +828,7 @@ def install_ca_bundle(entries, report):
                                 "bundleBytes": len(bundle)}
 
 
-def overlay_entries(runtime_info, with_python=False, with_pnpm=False, with_bridge=False):
+def overlay_entries(runtime_info, with_python=False, with_pnpm=False, with_bridge=False, host=False, root_plugin=False):
     """Files dsh-app adds to the rootfs. Kept here so the recipe lives in one place."""
     E = {}
 
@@ -876,7 +898,7 @@ def overlay_entries(runtime_info, with_python=False, with_pnpm=False, with_bridg
         # what `npm i -g pnpm` creates under npm's global prefix (/usr/local)
         for name, target in PNPM_BINS.items():
             s("usr/local/bin/" + name, "../lib/node_modules/pnpm/bin/" + target)
-    if with_pnpm or with_bridge:
+    if with_pnpm or with_bridge or host:
         patch = ("# dsh-app: overlay for `dsh web`, passed with --patch by the app's launch command and\n"
                  "# replaced on every runtime upgrade (edits here do not survive one).\n")
         if with_pnpm:
@@ -900,6 +922,19 @@ def overlay_entries(runtime_info, with_python=False, with_pnpm=False, with_bridg
                       "- insert:\n"
                       "    - id: dsh-go-bridge\n"
                       "      name: %s/lib/index.js\n" % DSH_GO_BRIDGE)
+        if host:
+            patch += ("#\n# Parakeet: rows this build never mounts (no feedback, no DeepSeek account\n"
+                      "# sign-in, no product analytics or session telemetry upload).\n")
+            for row in PARAKEET_DISABLED_ROWS:
+                patch += "- id: %s\n  disabled: true\n" % row
+        if root_plugin:
+            patch += ("#\n# Parakeet: root_shell / root_status through su (KernelSU, Magisk, ...).\n"
+                      "# Confirmation goes through DSH's approval service (the app's native approval UI).\n"
+                      "- insert:\n"
+                      "    - id: parakeet-root-shell\n"
+                      "      name: %s/lib/index.js\n" % PARAKEET_ROOT_SHELL)
+            # No config here: the plugin's defaults (requireConfirm: true, persistent su) apply and
+            # the user's own setting for the row (plugin settings in the app) is not overridden.
         f(DSH_WEB_PATCH.lstrip("/"), patch)
     d("root/.dsh", 0o700)
     d("root/.l2s", 0o700)          # PROOT_L2S_DIR: hard-link backing files (kept with /root on upgrade)
@@ -948,9 +983,9 @@ def cmd_assemble(args):
         if len(samples) < 12:
             samples.append(path)
 
-    # 1. Ubuntu Base
+    # 1. Ubuntu Base (absent for the Parakeet host engine: no container at all)
     hardlinks = []
-    with tarfile.open(args.base, "r:gz") as t:
+    with (tarfile.open(args.base, "r:gz") if args.base else tarfile.open(fileobj=io.BytesIO(_EMPTY_TAR))) as t:
         for m in t:
             p = norm_member(m.name)
             if not p:
@@ -1065,7 +1100,7 @@ def cmd_assemble(args):
 
     # 2. Node.js
     keep_node_top = {"bin", "lib", "LICENSE"}
-    with tarfile.open(args.node, "r:*") as t:
+    with (tarfile.open(args.node, "r:*") if args.node else tarfile.open(fileobj=io.BytesIO(_EMPTY_TAR))) as t:
         for m in t:
             p = norm_member(m.name)
             parts = p.split("/", 1)
@@ -1086,7 +1121,8 @@ def cmd_assemble(args):
             elif m.islnk():
                 raise SystemExit("unexpected hard link in node tarball: " + m.name)
     entries["opt"] = Entry("dir", 0o755, origin="node")
-    entries["opt/node"] = Entry("dir", 0o755, origin="node")
+    if args.node:
+        entries["opt/node"] = Entry("dir", 0o755, origin="node")
 
     # 3. npm trees on disk: DSH (whole --prefix) and pnpm (laid out like `npm i -g pnpm`)
     def add_tree(src, dest_root, origin, drop_reason):
@@ -1134,17 +1170,45 @@ def cmd_assemble(args):
                 mode = 0o755 if st.st_mode & 0o111 else 0o644
                 entries[dest] = Entry("file", mode, path=full, origin=origin)
 
-    add_tree(args.dsh_prefix, "opt/dsh", "dsh", dsh_drop_reason)
+    def host_drop_reason(rel, abi, prune_dev):
+        if any(rel.startswith(p) for p in HOST_DROP_PACKAGES):
+            return "host-unloadable-addon"
+        if rel.endswith(".node"):
+            return "host-unloadable-addon"
+        return dsh_drop_reason(rel, abi, prune_dev)
+
+    add_tree(args.dsh_prefix, "opt/dsh", "dsh", host_drop_reason if args.host else dsh_drop_reason)
     if args.pnpm_prefix:
         add_tree(os.path.join(args.pnpm_prefix, "node_modules", "pnpm"), "usr/local/lib/node_modules/pnpm",
                  "pnpm", pnpm_drop_reason)
     if args.bridge:
         add_tree(args.bridge, DSH_GO_BRIDGE.lstrip("/"), "bridge", lambda rel, abi, prune: None)
+    if args.root_plugin:
+        add_tree(args.root_plugin, PARAKEET_ROOT_SHELL.lstrip("/"), "bridge",
+                 lambda rel, abi, prune: "plugin-tests" if rel.startswith("test/") else None)
+
+    # 3b. Parakeet: one language per APK. DSH plugin text lives in <pkg>/locale/<lang>.json and
+    # DSH anchors every dictionary on locale/en.json, so en.json always stays; the zh build keeps
+    # zh.json beside it, the en build nothing else. Other languages are dropped.
+    if args.locale:
+        keep = {"en"} | ({args.locale} if args.locale != "en" else set())
+        for p in list(entries):
+            if not p.startswith("opt/dsh/node_modules/") or not p.endswith(".json"):
+                continue
+            parent, name = posixpath.split(p)
+            if posixpath.basename(parent) != "locale":
+                continue
+            lang = name[:-5].lower()
+            if lang not in keep and entries[p].kind == "file":
+                drop("other-locale", p, entries[p].size())
+                del entries[p]
+        report["locale"] = args.locale
 
     # 4. dsh-app overlay (wins over everything above)
     runtime_info = json.loads(args.runtime_info)
     for p, e in overlay_entries(runtime_info, with_python=bool(args.python), with_pnpm=bool(args.pnpm_prefix),
-                                with_bridge=bool(args.bridge)).items():
+                                with_bridge=bool(args.bridge), host=args.host,
+                                root_plugin=bool(args.root_plugin)).items():
         entries[p] = e
 
     # 5. ELF audit + arch/libc pruning; Termux-style fixes for node-pty helpers
@@ -1397,6 +1461,30 @@ def launch_template():
     }
 
 
+# Host paths the Parakeet host engine shows as themselves (no container): every
+# other absolute path (/root, /tmp, /opt, /usr, /etc) lives in the runtime tree.
+HOST_IDENTITY_MOUNTS = ("/system", "/system_ext", "/vendor", "/product", "/odm", "/apex",
+                        "/data", "/storage", "/sdcard", "/mnt", "/proc", "/sys", "/dev",
+                        "/cache", "/metadata", "/linkerconfig", "/acct", "/config")
+
+
+def host_launch_template():
+    """Parakeet host engine: Termux's Bionic node from nativeLibraryDir runs DSH
+    directly on Android (no PRoot, no Ubuntu). Same shape as launch_template() so
+    the app composes overlays identically; HostLaunch.kt turns it into the real argv."""
+    t = launch_template()
+    argv = t["argv"]
+    env_at = argv.index("/usr/bin/env")
+    head = ["{NATIVE_LIB_DIR}/libnode_exec.so"]
+    for m in HOST_IDENTITY_MOUNTS:
+        head += ["-b", m]
+    t["argv"] = head + argv[env_at:]
+    t["env"] = {"LD_LIBRARY_PATH": "{FILES_DIR}/termux-lib:{NATIVE_LIB_DIR}"}
+    t["note"] = ("engine=host: the -b entries are path identities for runtime/direct/host-preload.mjs, "
+                 "not mounts; nothing is containerised")
+    return t
+
+
 def cmd_manifest(args):
     report = json.load(open(args.report))
     jni = json.load(open(args.jnilibs))
@@ -1420,12 +1508,12 @@ def cmd_manifest(args):
         "dshVersion": v["dshVersion"],
         "nodeVersion": v["nodeVersion"],
         "pnpmVersion": v["pnpmVersion"],
-        "ubuntuVersion": v["ubuntuVersion"],
-        "prootVersion": v["prootVersion"],
+        "ubuntuVersion": v.get("ubuntuVersion"),
+        "prootVersion": v.get("prootVersion"),
         "dshPatches": v.get("dshPatches", []),
         "dshGoBridge": {"version": v["dshGoBridge"], "path": DSH_GO_BRIDGE} if v.get("dshGoBridge") else None,
-        "tallocVersion": v["tallocVersion"],
-        "androidShmemVersion": v["androidShmemVersion"],
+        "tallocVersion": v.get("tallocVersion"),
+        "androidShmemVersion": v.get("androidShmemVersion"),
         "npmRegistry": "https://registry.npmmirror.com",
         "pnpmRegistry": NPMMIRROR,
         "pluginRegistries": {
@@ -1448,7 +1536,8 @@ def cmd_manifest(args):
             "nativeAddonInventory": "/opt/dsh-go/direct/native-addons.json",
             "compatibilityGate": "nonempty or unreadable PRoot hard-link backing store selects proot; late L2S targets are refused without data migration",
         },
-        "launch": launch_template(),
+        "launch": host_launch_template() if args.host else launch_template(),
+        "engine": "host" if args.host else "proot",
         "build": v.get("build", {}),
     }
     with open(args.out, "w") as f:
@@ -1499,8 +1588,11 @@ def main():
 
     p = sub.add_parser("assemble")
     p.add_argument("--abi", required=True, choices=sorted(ABI))
-    p.add_argument("--base", required=True)
-    p.add_argument("--node", required=True)
+    p.add_argument("--base", help="Ubuntu Base tarball (omitted with --host)")
+    p.add_argument("--node", help="glibc Node tarball -> /opt/node (omitted with --host)")
+    p.add_argument("--host", action="store_true", help="Parakeet host engine: no Ubuntu, no glibc Node, no native addons")
+    p.add_argument("--root-plugin", help="Parakeet root-shell plugin dir -> " + PARAKEET_ROOT_SHELL)
+    p.add_argument("--locale", choices=("zh", "en"), help="Parakeet: keep only this language's DSH locale files (+ en anchor)")
     p.add_argument("--dsh-prefix", required=True)
     p.add_argument("--pnpm-prefix", help="npm --prefix tree holding node_modules/pnpm -> /usr/local/lib/node_modules/pnpm")
     p.add_argument("--out", required=True)
@@ -1523,6 +1615,7 @@ def main():
     p.add_argument("--jnilibs", required=True)
     p.add_argument("--versions", required=True)
     p.add_argument("--out", required=True)
+    p.add_argument("--host", action="store_true")
     p.set_defaults(fn=cmd_manifest)
 
     args = ap.parse_args()

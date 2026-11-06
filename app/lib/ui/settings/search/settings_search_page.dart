@@ -99,8 +99,8 @@ class SettingsSearchPage extends ConsumerStatefulWidget {
 class _SettingsSearchPageState extends ConsumerState<SettingsSearchPage> {
   final _field = TextEditingController();
   final _focus = FocusNode();
-  static final _zh = lookupL10n(AppLocale.zhCN);
-  static final _en = lookupL10n(AppLocale.en);
+  static final _zh = lookupL10n(AppLocale.build);
+  static final _en = lookupL10n(AppLocale.build);
 
   @override
   void dispose() {

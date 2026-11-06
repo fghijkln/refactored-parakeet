@@ -3,7 +3,7 @@
 
 /// The forum's address (docs/forum/deploy.md). An address set in 论坛设置
 /// wins over it.
-const forumDefaultBaseUrl = 'https://forum.dshtui.com';
+const forumDefaultBaseUrl = 'https://parakeet.invalid';
 
 /// Where Discourse sends the encrypted User API Key. Must be listed in the
 /// site setting `allowed_user_api_auth_redirects` (infra/forum/settings) and
