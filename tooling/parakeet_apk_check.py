@@ -35,6 +35,25 @@ PLACEHOLDER = re.compile(r"\{[^{}]*\}")
 CJK = re.compile(r"[\u4e00-\u9fff]")
 
 failed = False
+ENTRIES = {}   # APK entry name -> bytes (the scanned haystack, per entry)
+REPORT = {}    # check -> {string: [entries]}  (written with --report)
+
+
+def where(s):
+    """APK entries that carry [s] (UTF-8 or UTF-16LE)."""
+    return [n for n, b in ENTRIES.items() if present(b, s)]
+
+
+def flag(check, strings, limit=8):
+    """Print each flagged string with the APK entries it is in; keep all for --report."""
+    found = {f: where(f) for f in strings}
+    REPORT[check] = found
+    by_entry = {}
+    for f, ns in found.items():
+        for n in ns:
+            by_entry.setdefault(n, []).append(f)
+    for n, fs in sorted(by_entry.items(), key=lambda x: -len(x[1])):
+        print("      %4d in %s, e.g. %s" % (len(fs), n, fs[:limit]))
 
 
 def ok(msg):
@@ -95,6 +114,7 @@ def main():
     ap.add_argument("--arb-dir", required=True)
     ap.add_argument("--aapt2", default=os.environ.get("AAPT2", "aapt2"))
     ap.add_argument("--version", default="0.2.0")
+    ap.add_argument("--report", help="write every flagged string with its APK entries to this JSON file")
     a = ap.parse_args()
     other = "en" if a.lang == "zh" else "zh"
     print("== %s (%s)" % (os.path.basename(a.apk), a.lang))
@@ -125,7 +145,8 @@ def main():
         for n in z.namelist():
             if (n.endswith("libapp.so") or re.match(r"classes\d*\.dex$", n) or n == "resources.arsc"
                     or (n.startswith("assets/flutter_assets/") and not n.endswith((".png", ".ttf", ".otf", ".webp", ".jpg")))):
-                hay += z.read(n)
+                ENTRIES[n] = z.read(n)
+                hay += ENTRIES[n]
             if re.match(r"assets/runtime/rootfs-[^/]+\.tar\.(xz|gz)$", n):
                 runtime_archives.append(n)
         hay = bytes(hay)
@@ -133,7 +154,11 @@ def main():
 
         # 2. hosts
         hits = [h for h in FORBIDDEN_HOSTS if present(hay, h)]
-        bad("upstream hosts present: %s" % hits) if hits else ok("no upstream hosts (%s)" % ", ".join(FORBIDDEN_HOSTS))
+        if hits:
+            bad("upstream hosts present: %s" % hits)
+            flag("hosts", hits)
+        else:
+            ok("no upstream hosts (%s)" % ", ".join(FORBIDDEN_HOSTS))
 
         mine, theirs = load_arb(a.arb_dir, a.lang), load_arb(a.arb_dir, other)
         blank = blank_regex()
@@ -153,6 +178,7 @@ def main():
         leaked = sorted(f for f in removed if present(hay, f))
         if leaked:
             bad("%d removed-feature strings present, e.g. %s" % (len(leaked), leaked[:8]))
+            flag("removed", leaked)
         else:
             ok("none of %d removed-feature strings present" % len(removed))
 
@@ -170,6 +196,7 @@ def main():
         leaked = [f for f in foreign_frags if present(hay, f)]
         if leaked:
             bad("%d/%d %s-only UI strings present, e.g. %s" % (len(leaked), len(foreign_frags), other, leaked[:8]))
+            flag("foreign", leaked)
         else:
             ok("none of %d %s-only UI strings present" % (len(foreign_frags), other))
 
@@ -192,6 +219,9 @@ def main():
             if a.lang == "zh" and not any(l.startswith("zh") for l in langs):
                 bad("%s: zh build has no zh DSH locale file" % n)
 
+    if a.report:
+        with open(a.report, "w", encoding="utf-8") as f:
+            json.dump(REPORT, f, ensure_ascii=False, indent=1)
     print("RESULT %s %s" % (os.path.basename(a.apk), "FAIL" if failed else "PASS"))
     return 1 if failed else 0
 

@@ -10,6 +10,12 @@
 2. Android res: for zh, every values-zh/*.xml entry replaces the same-named entry in
    values/*.xml and values-zh is dropped; for en, values-zh is dropped. The APK
    carries one language (localeFilters in build.gradle.kts as well).
+3. Bundled assets (scrub_assets): the guide skill keeps only the build language's
+   pages and manifest entries (README keeps that language's section); markdown
+   blocks that describe removed features are dropped; the plugin kit's message
+   table gives the other language's keys the build language's text; upstream hosts
+   (go.dshtui.com, dshtui.com) become parakeet.invalid (schema $id included, so
+   the kit schemas stay self-consistent); the pet pack's `source` link is removed.
 """
 import json
 import os
@@ -107,8 +113,189 @@ def merge_android(res):
             print("dropped res/%s" % name)
 
 
+# Phrases naming removed features in guide markdown, besides the removed ARB strings.
+REMOVED_MD = {
+    "zh": ["用 DeepSeek 账号登录", "DeepSeek 账号", "检查更新", "更新窗口", "有新版本", "跳过这个版本", "立即更新",
+           "使用统计", "论坛", "交流群", "社区", "App 会发送哪些数据", "App 发送的数据"],
+    "en": ["Sign in with DeepSeek", "DeepSeek account", "Check for updates", "checking for updates",
+           "Check automatically", "update window", "Update available", "Skip this version", "Update now",
+           "usage stats", "forum", "Community", "What the app sends", "what the app sends"],
+}
+# Kept features worded together with a removed one: reworded before blocks are dropped.
+REWORD_MD = [
+    ("DeepSeek 账号与 API Key", "DeepSeek API Key"), ("DeepSeek 账号或 API Key", "DeepSeek API Key"),
+    ("用账号登录或填写 API Key", "填写 API Key"),
+    ("DeepSeek account and API key", "DeepSeek API key"), ("a DeepSeek account or API key", "a DeepSeek API key"),
+    ("DeepSeek account or API key", "DeepSeek API key"), ("where you sign in or enter an API key", "where you enter an API key"),
+]
+HOSTS = re.compile(r"https?://(?:go\.)?dshtui\.com|(?:go\.)?dshtui\.com")
+CJK = re.compile(r"[\u4e00-\u9fff]")
+PH = re.compile(r"\{[^{}]*\}")
+
+
+def removed_terms():
+    """Literal pieces of the removed-feature ARB strings (both languages), as the APK check sees them."""
+    arbs = {}
+    for lang in ("zh", "en"):
+        with open(os.path.join(ROOT, "app/lib/l10n/app_%s.arb" % lang), encoding="utf-8") as f:
+            arbs[lang] = {k: v for k, v in json.load(f).items() if not k.startswith("@") and isinstance(v, str)}
+    def frags(v):
+        return [p.strip() for p in PH.split(v) if p.strip() and "{" not in p and "}" not in p]
+    kept = "\n".join(f for a in arbs.values() for k, v in a.items() if not BLANK.match(k) for f in frags(v))
+    out = set()
+    for lang, a in arbs.items():
+        for k, v in a.items():
+            if BLANK.match(k):
+                for f in frags(v):
+                    good = len(CJK.findall(f)) >= 4 if lang == "zh" else (len(f) >= 14 and f.isascii() and " " in f)
+                    if good and f not in kept:
+                        out.add(f)
+    return out
+
+
+def md_blocks(text):
+    """Split markdown into blocks: headings, fenced code, list items (with continuation), paragraphs."""
+    blocks, cur, fence = [], [], False
+    for line in text.split("\n"):
+        if fence:
+            cur.append(line)
+            if line.lstrip().startswith("```"):
+                blocks.append(cur); cur = []; fence = False
+            continue
+        if line.lstrip().startswith("```"):
+            if cur: blocks.append(cur)
+            cur = [line]; fence = True
+            continue
+        starts = (not line.strip() or line.startswith("#") or re.match(r"^(\s*)([-*+]|\d+\.)\s", line)
+                  or line.startswith(">") or line.startswith("|"))
+        if starts and cur and not (line.startswith("|") and cur[-1].startswith("|")):
+            blocks.append(cur); cur = []
+        cur.append(line)
+    if cur: blocks.append(cur)
+    return blocks
+
+
+def scrub_markdown(text, terms):
+    for old, new in REWORD_MD:
+        text = text.replace(old, new)
+    def hit(s):
+        return any(t in s for t in terms)
+    out, drop_level, dropped = [], None, 0
+    blocks = md_blocks(text)
+    for i, b in enumerate(blocks):
+        if not b:
+            continue
+        head = b[0]
+        m = re.match(r"^(#+)\s", head)
+        if drop_level is not None:
+            if m and len(m.group(1)) <= drop_level:
+                drop_level = None
+            else:
+                dropped += 1
+                continue
+        if m:
+            if hit(head):
+                drop_level = len(m.group(1)); dropped += 1
+                continue
+            out.append(b); continue
+        joined = "\n".join(b)
+        if not hit(joined):
+            out.append(b); continue
+        # An index line "- [Page](x.md)：a、b、c": drop only the segments naming removed features.
+        lm = re.match(r"^(\s*- \[[^\]]+\]\([^)]+\)\s*[:：]\s*)(.*)$", head)
+        if len(b) == 1 and lm and not hit(lm.group(1)):
+            sep = "、" if "、" in lm.group(2) else ", "
+            segs = [x for x in lm.group(2).split(sep) if not hit(x)]
+            out.append([lm.group(1) + sep.join(segs)]); dropped += 1
+            continue
+        # A nested list item takes its deeper children with it.
+        dropped += 1
+        ind = len(head) - len(head.lstrip())
+        if re.match(r"^\s*([-*+]|\d+\.)\s", head):
+            j = i + 1
+            while j < len(blocks) and blocks[j][0].strip() and (len(blocks[j][0]) - len(blocks[j][0].lstrip())) > ind:
+                blocks[j][:] = []; j += 1
+    lines = []
+    for b in out:
+        lines.extend(b)
+    text = "\n".join(lines)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text, dropped
+
+
+def scrub_assets():
+    assets = os.path.join(ROOT, "app/assets")
+    other = "en" if LANG == "zh" else "zh"
+    terms = set(removed_terms())
+    for lang in ("zh", "en"):
+        terms.update(REMOVED_MD[lang])
+    terms = sorted(terms, key=len, reverse=True)
+    # Guide skill: one language.
+    guide = os.path.join(assets, "skills/dsh-go-guide")
+    if os.path.isdir(guide):
+        mpath = os.path.join(guide, "manifest.json")
+        with open(mpath, encoding="utf-8") as f:
+            manifest = json.load(f)
+        files = manifest["files"]
+        for asset in list(files):
+            if asset.startswith(other + "-"):
+                del files[asset]
+                p = os.path.join(guide, asset)
+                if os.path.exists(p):
+                    os.remove(p)
+        with open(mpath, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        readme = os.path.join(guide, "README.md")
+        if os.path.isfile(readme):
+            text = open(readme, encoding="utf-8").read()
+            mine_h, other_h = ("## 中文", "## English") if LANG == "zh" else ("## English", "## 中文")
+            parts = re.split(r"(?m)^(?=## )", text)
+            text = "".join(p for p in parts if not p.startswith(other_h))
+            open(readme, "w", encoding="utf-8").write(text)
+        total = 0
+        for name in sorted(os.listdir(guide)):
+            if name.endswith(".md") and name != "SKILL.md":
+                p = os.path.join(guide, name)
+                text, n = scrub_markdown(open(p, encoding="utf-8").read(), terms)
+                open(p, "w", encoding="utf-8").write(text)
+                total += n
+        print("guide skill: %s pages only, %d removed-feature blocks dropped" % (LANG, total))
+    # Plugin kit messages: the other language's entries are copies of this one's.
+    msgs = os.path.join(assets, "skills/dsh-go-plugin/kit-lib-messages.json")
+    if os.path.isfile(msgs):
+        with open(msgs, encoding="utf-8") as f:
+            data = json.load(f)
+        if LANG in data and other in data:
+            data[other] = dict(data[LANG])
+            with open(msgs, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=1)
+                f.write("\n")
+            print("plugin kit messages: %s entries now carry the %s text" % (other, LANG))
+    # Upstream hosts -> parakeet.invalid; pet pack source links removed.
+    for d, _, fs in os.walk(assets):
+        for name in fs:
+            p = os.path.join(d, name)
+            if name == "pack.json":
+                with open(p, encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and "source" in data:
+                    del data["source"]
+                    with open(p, "w", encoding="utf-8") as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                        f.write("\n")
+                    print("removed source from %s" % os.path.relpath(p, ROOT))
+            if name.endswith((".json", ".md", ".mjs", ".js", ".yml", ".yaml", ".txt", ".html", ".css")):
+                text = open(p, encoding="utf-8").read()
+                new = HOSTS.sub(lambda m: ("https://" if m.group(0).startswith("http") else "") + "parakeet.invalid", text)
+                if new != text:
+                    open(p, "w", encoding="utf-8").write(new)
+                    print("upstream host -> parakeet.invalid in %s" % os.path.relpath(p, ROOT))
+
+
 if __name__ == "__main__":
     ROOT, LANG = sys.argv[1], sys.argv[2]
     assert LANG in ("zh", "en")
+    scrub_assets()  # before blank_arb: reads the unblanked ARB files
     blank_arb(os.path.join(ROOT, "app/lib/l10n/app_%s.arb" % LANG))
     merge_android(os.path.join(ROOT, "app/android/app/src/main/res"))

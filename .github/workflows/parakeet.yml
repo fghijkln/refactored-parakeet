@@ -259,12 +259,21 @@ jobs:
       - name: APK checks (debuggable, hosts, removed features, locale purity)
         run: |
           AAPT2=$(ls -1d "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -n 1)
+          mkdir -p dist-report
           rc=0
           for apk in dist/*.apk; do
-            python3 tooling/parakeet_apk_check.py "$apk" "${{ matrix.lang }}" --arb-dir "$RUNNER_TEMP/arb" --aapt2 "$AAPT2" --version "$APP_VERSION" || rc=1
+            python3 tooling/parakeet_apk_check.py "$apk" "${{ matrix.lang }}" --arb-dir "$RUNNER_TEMP/arb" --aapt2 "$AAPT2" --version "$APP_VERSION" --report "dist-report/$(basename "$apk" .apk).json" || rc=1
           done
           exit $rc
       - uses: actions/upload-artifact@v4
+        if: success() || failure()
+        with:
+          name: check-report-${{ matrix.lang }}
+          path: dist-report/
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        # also when the checks fail, so a failing APK can be inspected
+        if: success() || failure()
         with:
           name: apk-${{ matrix.lang }}
           path: dist/*.apk
