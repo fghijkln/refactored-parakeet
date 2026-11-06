@@ -68,6 +68,36 @@ ALLOW = [
      "never shown."),
     ("zh", "foreign", re.compile(r"^classes\d*\.dex$"), {"Permission denied"},
      "kernel error text the crash classifier matches in engine logs (runtime/CrashClassifier.kt); never shown."),
+    # en build: Chinese that is not app UI. Every string is listed; anything new still fails.
+    ("en", "foreign", re.compile(r"^classes\d*\.dex$"), {
+        "不打扰模式", "不支持的", "全局补丁", "切回原生界面", "原生界面", "可视化回复", "启动后很快崩溃", "启动失败",
+        "存储空间不足", "安全模式", "安装日志", "密码和验证码", "尚未就绪", "工作目录", "应用名单", "引擎日志", "引擎状态",
+        "当前屏幕", "恢复正常模式", "或更高版本", "手机存储", "手机操控", "搜索对话", "无法读取", "无障碍服务", "暂不可用",
+        "正常启动", "没有找到", "没有权限", "没有记录到失败时的输出", "直接启动", "省电策略", "稍后再试", "系统权限",
+        "系统设置", "网页版设置", "被系统结束", "访问手机文件", "运行中崩溃", "运行环境", "还没有记录", "进入安全模式",
+        "连接方式", "连续两次启动失败", "重启引擎", "重新打开", "需要联网", "默认工作目录"},
+     "agent-facing text of the native layer, which upstream dsh-Go writes in Chinese only: the phone-control tool "
+     "catalog and tool results (phone/*), the AGENTS.md section and safe-mode report the app writes for the agent "
+     "(runtime/GuestSetup.kt, runtime/SafeMode.kt), and the /root/手机存储 workspace path; user-facing native text "
+     "comes from res/values (AppStrings)."),
+    ("en", "foreign", re.compile(r"^classes\d*\.dex$"), {"开发者选项", "退出登录"},
+     "on-screen words of other apps and system Settings that phone control matches to protect pages and gate "
+     "sensitive taps (phone/a11y/ProtectedPages.kt, phone/SensitiveWords.kt); the phone's own UI language is not the "
+     "app's, so both languages stay; never shown."),
+    ("en", "foreign", re.compile(r"^lib/[^/]+/libapp\.so$"), {
+        "可视化回复", "完成后收起过程", "失败前后的日志", "引擎日志", "手机存储", "对话字号", "安全模式", "本机引擎", "手机操控"},
+     "labels of the diagnostics snapshot the app writes for the agent (app/lib/diagnostics/diagnostics_markdown.dart; "
+     "read by the dsh-go-support skill)."),
+    ("en", "foreign", re.compile(r"^lib/[^/]+/libapp\.so$"), {"存储空间不足", "存储空间不足：需要约", "MB，当前可用"},
+     "a pattern that matches the native layer's agent-facing storage message (app/lib/ui/engine/engine_status.dart)."),
+    ("en", "foreign", re.compile(r"^lib/[^/]+/libapp\.so$"), {"生成图像", "生成视频"},
+     "the media-generation request header the app writes into a message and parses back "
+     "(app/lib/ui/chat/media/generate_header.dart, docs/design/media-generation.md)."),
+    ("en", "foreign", re.compile(r"^lib/[^/]+/libapp\.so$"), {"语音输入"},
+     "names DSH Web and plugins show, matched to find their entries (app/lib/ui/features/feature_catalog.dart "
+     "DshWebTarget); never shown."),
+    ("en", "foreign", re.compile(r"^lib/[^/]+/libapp\.so$"), {"提交插件"},
+     "anchor of the upstream plugin market URL (app/lib/ui/plugins/market_tab.dart marketSubmitUrl)."),
 ]
 LANG = None
 
@@ -155,19 +185,30 @@ def encodings(s):
         pass
 
 
+WORDCH = frozenset(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
+
+
+def _standing(hay, needle, step, lead):
+    """Some occurrence of [needle] has no letter/digit right before (when [lead]) or after it
+    ([step] = 1 for UTF-8, 2 for UTF-16LE, whose high byte must be 0)."""
+    i = hay.find(needle)
+    while i >= 0:
+        j = i + len(needle)
+        after = j + step <= len(hay) and hay[j] in WORDCH and (step == 1 or hay[j + 1] == 0)
+        before = lead and i - step >= 0 and hay[i - step] in WORDCH and (step == 1 or hay[i - 1] == 0)
+        if not after and not before:
+            return True
+        i = hay.find(needle, i + 1)
+    return False
+
+
 def present(hay, s):
     """[s] is in [hay] (UTF-8 or UTF-16LE). An ASCII string must stand as words of its
     own: "Connection time" is not found inside "Connection timed out"."""
     if not s.isascii():
         return any(e in hay for e in encodings(s))
-    b = s.encode("ascii")
-    if b not in hay and s.encode("utf-16-le") not in hay:
-        return False
-    w8 = rb"(?<![A-Za-z0-9])" + re.escape(b) + rb"(?![A-Za-z0-9])"
-    w16 = rb"(?<![A-Za-z0-9]\x00)" + re.escape(s.encode("utf-16-le")) + rb"(?![A-Za-z0-9]\x00)"
-    if s[:1].isalnum() is False:
-        w8, w16 = re.escape(b) + rb"(?![A-Za-z0-9])", re.escape(s.encode("utf-16-le")) + rb"(?![A-Za-z0-9]\x00)"
-    return re.search(w8, hay) is not None or re.search(w16, hay) is not None
+    lead = s[:1].isalnum()
+    return _standing(hay, s.encode("ascii"), 1, lead) or _standing(hay, s.encode("utf-16-le"), 2, lead)
 
 
 def load_arb(d, lang):

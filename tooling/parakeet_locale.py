@@ -274,6 +274,29 @@ def scrub_code_assets(assets):
                     print("code asset scrubbed: %s" % os.path.relpath(p, ROOT))
 
 
+# Chinese messages the Dart packages raise to the UI; the en tree gets these.
+PACKAGES_EN = {
+    "packages/dsh_client/lib/src/agents_api.dart": {
+        "一次性子代理只能查看记录": "A one-shot subagent can only be viewed",
+        "上级对话不在运行，回到上级对话后再继续": "The parent chat isn't running. Go back to it to continue",
+        "这个子代理不能继续对话": "This subagent can't continue the chat",
+    },
+}
+
+
+def scrub_packages():
+    if LANG != "en":
+        return
+    for rel, table in PACKAGES_EN.items():
+        p = os.path.join(ROOT, rel)
+        text = open(p, encoding="utf-8").read()
+        for zh, en in table.items():
+            assert "'%s'" % zh in text, "%s: %s not found" % (rel, zh)
+            text = text.replace("'%s'" % zh, "'%s'" % en.replace("'", "\\'"))
+        open(p, "w", encoding="utf-8").write(text)
+        print("package messages in English: %s" % rel)
+
+
 def scrub_replay_viewer():
     """The exported conversation page (app/lib/share_code/replay_viewer.g.dart) carries the
     viewer's zh and en tables and picks one from the browser: one language here, its
@@ -406,5 +429,6 @@ if __name__ == "__main__":
     assert LANG in ("zh", "en")
     scrub_assets()  # before blank_arb: reads the unblanked ARB files
     scrub_replay_viewer()
+    scrub_packages()
     blank_arb(os.path.join(ROOT, "app/lib/l10n/app_%s.arb" % LANG))
     merge_android(os.path.join(ROOT, "app/android/app/src/main/res"))
