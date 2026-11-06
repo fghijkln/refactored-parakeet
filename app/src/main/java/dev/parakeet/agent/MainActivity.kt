@@ -16,7 +16,10 @@ import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
 import android.webkit.WebView
+import android.webkit.WebSettings
 import android.webkit.WebViewClient
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -37,7 +40,10 @@ class MainActivity : android.app.Activity() {
     private lateinit var web: WebView
     private lateinit var status: TextView
     private lateinit var rootStatus: TextView
-    private var loaded = false
+    private var docStartCss = false
+    private var docStartHandle: androidx.webkit.ScriptHandler? = null
+    /** The URL (with its one-time token) the WebView has loaded; a new server gets a reload. */
+    private var loadedUrl: String? = null
 
     private val stateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) = refresh()
@@ -45,6 +51,7 @@ class MainActivity : android.app.Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (BuildConfig.DEBUG) Perf.strictMode()
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
         status = TextView(this).apply {
@@ -64,15 +71,38 @@ class MainActivity : android.app.Activity() {
             gravity = Gravity.CENTER_VERTICAL
             addView(rootButton)
         }
+        // Remote debugging costs a little on every frame; only debug builds get it.
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
         web = WebView(this).apply {
+            // Composited by the window's hardware renderer (the default for a
+            // hardware-accelerated window). Not LAYER_TYPE_HARDWARE: that
+            // would add an extra offscreen copy of the whole page per frame.
+            setLayerType(android.view.View.LAYER_TYPE_NONE, null)
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
-            settings.databaseEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
-            webViewClient = WebViewClient()
+            settings.cacheMode = WebSettings.LOAD_DEFAULT
+            // Features the DSH UI does not use.
+            settings.allowFileAccess = false
+            settings.allowContentAccess = false
+            settings.setGeolocationEnabled(false)
+            settings.setSupportZoom(false)
+            settings.builtInZoomControls = false
+            settings.displayZoomControls = false
+            // Keep tiles rasterized while the strip above changes or the
+            // activity comes back to the foreground: no blank-then-paint flash.
+            if (Build.VERSION.SDK_INT >= 23) settings.offscreenPreRaster = true
+            webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView, url: String?) {
+                    // Fallback where document-start scripts are unsupported.
+                    if (!docStartCss) view.evaluateJavascript(Perf.CSS_INJECT_JS, null)
+                }
+            }
             webChromeClient = object : WebChromeClient() {
                 override fun onConsoleMessage(m: ConsoleMessage): Boolean {
-                    android.util.Log.d(Runtime.TAG, "web: ${m.message()}")
+                    if (BuildConfig.DEBUG || m.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
+                        android.util.Log.d(Runtime.TAG, "web: ${m.message()}")
+                    }
                     return true
                 }
             }
@@ -91,6 +121,18 @@ class MainActivity : android.app.Activity() {
 
         DshService.start(this)
         probeRoot(interactive = false)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        refresh()
+    }
+
+    override fun onDestroy() {
+        (web.parent as? ViewGroup)?.removeView(web)
+        web.destroy()
+        super.onDestroy()
     }
 
     override fun onResume() {
@@ -112,17 +154,33 @@ class MainActivity : android.app.Activity() {
     private fun refresh() {
         val url = DshService.url.get()
         val err = DshService.lastError.get()
-        when {
-            url != null -> {
-                status.text = "Agent runtime ready"
-                if (!loaded) {
-                    loaded = true
-                    web.loadUrl(url)
-                }
-            }
-            err != null -> status.text = "Runtime error: $err"
-            else -> status.text = "Starting agent runtime… (first launch extracts ~200 MB, give it a minute)"
+        val text = when {
+            url != null -> "Agent runtime ready"
+            err != null -> "Runtime error: $err"
+            else -> DshService.phase.get() ?: "Starting agent runtime…"
         }
+        // setText re-lays out the whole column, WebView included: only on change.
+        if (status.text.toString() != text) status.text = text
+        if (url != null && url != loadedUrl) {
+            loadedUrl = url
+            installPerfCss(url)
+            web.loadUrl(url)
+        }
+    }
+
+    /**
+     * Inject [Perf.CSS] before the DSH page's own scripts run, for exactly the
+     * server's origin (each runtime start has a new port). Falls back to
+     * onPageFinished where the WebView lacks document-start scripts.
+     */
+    private fun installPerfCss(url: String) {
+        docStartHandle?.remove()
+        docStartHandle = null
+        docStartCss = false
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
+        val origin = Regex("^https?://[^/]+").find(url)?.value ?: return
+        docStartHandle = runCatching { WebViewCompat.addDocumentStartJavaScript(web, Perf.CSS_INJECT_JS, setOf(origin)) }.getOrNull()
+        docStartCss = docStartHandle != null
     }
 
     private fun probeRoot(interactive: Boolean) {
@@ -165,15 +223,18 @@ class MainActivity : android.app.Activity() {
             1 -> startActivity(Intent(this, SettingsActivity::class.java))
             2 -> startActivity(Intent(this, LogActivity::class.java))
             3 -> {
-                loaded = false
-                DshService.stop(this)
-                web.postDelayed({ DshService.start(this) }, 800)
+                status.text = "Restarting agent runtime…"
+                DshService.restart(this)
             }
         }
         return true
     }
 
+    @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (web.canGoBack()) web.goBack() else super.onBackPressed()
+        // Keep the activity (and the rendered WebView) alive instead of
+        // finishing it: coming back is then instant instead of a full page
+        // load and re-render of the DSH UI. The runtime lives in the service.
+        if (web.canGoBack()) web.goBack() else moveTaskToBack(true)
     }
 }

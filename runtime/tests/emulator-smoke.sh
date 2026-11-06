@@ -6,15 +6,52 @@
 # extracts and boots under Bionic with the JS addon fallbacks, and the web UI
 # answers on 127.0.0.1.
 #
-#   runtime/tests/emulator-smoke.sh <apk> <log-dir>
+#   runtime/tests/emulator-smoke.sh <apk> <log-dir> [baseline-apk-url]
+#
+# With a baseline APK (the previous release), both builds are timed the same
+# way on this emulator: launch -> "dsh web:" banner in logcat, first launch
+# (includes runtime extraction) and a warm relaunch after force-stop.
 set -uo pipefail
 APK=${1:?apk}
 LOGS=${2:?log dir}
+BASELINE_URL=${3:-}
 PKG=dev.parakeet.agent
 mkdir -p "$LOGS"
+TIMING="$LOGS/startup-timing.txt"
+: > "$TIMING"
+
+# ms from `am start` to the server banner (polling every 250 ms).
+time_launch() {
+  local label=$1 s n
+  adb shell am force-stop "$PKG"; sleep 1
+  adb logcat -c
+  s=$(date +%s%N)
+  adb shell am start -n "$PKG/.MainActivity" > /dev/null
+  for n in $(seq 1 2400); do
+    adb logcat -d -s parakeet:I | grep -q "dsh web: http://127.0.0.1" && break
+    sleep 0.25
+  done
+  if adb logcat -d -s parakeet:I | grep -q "dsh web: http://127.0.0.1"; then
+    echo "$label: $(( ($(date +%s%N) - s) / 1000000 )) ms  $(adb logcat -d -s parakeet:I | grep -o 'parakeet-timing:.*' | tr '\n' ' ')" | tee -a "$TIMING"
+  else
+    echo "$label: did not come up" | tee -a "$TIMING"
+  fi
+}
 
 adb wait-for-device
 adb shell getprop ro.product.cpu.abilist | tee "$LOGS/abi.txt"
+
+if [ -n "$BASELINE_URL" ] && curl -fsSL -o "$LOGS/baseline.apk" "$BASELINE_URL"; then
+  adb install -r -g "$LOGS/baseline.apk" > /dev/null && {
+    time_launch "before (v0.1.0) first launch"
+    time_launch "before (v0.1.0) warm relaunch"
+    time_launch "before (v0.1.0) warm relaunch 2"
+    adb logcat -d -s parakeet:V > "$LOGS/logcat-baseline.txt"
+    adb uninstall "$PKG" > /dev/null
+  }
+  rm -f "$LOGS/baseline.apk"
+fi
+
 adb install -r -g "$APK" || { echo "FAIL: install"; exit 1; }
 adb logcat -c
 adb shell am start -W -n "$PKG/.MainActivity"
@@ -87,4 +124,14 @@ CODE=$(curl -s -o "$LOGS/index.html" -w '%{http_code}' -L -c "$LOGS/cj" -b "$LOG
 echo "GET web UI via adb forward -> $CODE"
 [ "$CODE" = "200" ] || { echo "FAIL: web UI returned $CODE"; exit 1; }
 grep -q "did not activate" "$LOGS/dsh.log" && { echo "WARN: some DSH plugins did not activate on Android:"; grep -A3 "did not activate" "$LOGS/dsh.log"; }
+# 4. startup timing of this build, measured like the baseline.
+FIRST=$(grep -o 'parakeet-timing:.*' "$LOGS/logcat-parakeet.txt" | tr '\n' ' ')
+echo "after (this build) first launch: see logcat  $FIRST" | tee -a "$TIMING"
+time_launch "after (this build) warm relaunch"
+time_launch "after (this build) warm relaunch 2"
+adb shell pm clear "$PKG" > /dev/null
+time_launch "after (this build) first launch (after pm clear)"
+adb logcat -d -s parakeet:V > "$LOGS/logcat-warm.txt"
+echo "--- startup timing (ms, emulator API 30 x86_64, swiftshader)"; cat "$TIMING"
+[ -n "${GITHUB_STEP_SUMMARY:-}" ] && { echo '### Startup timing on the CI emulator'; echo '```'; cat "$TIMING"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 echo "PASS: emulator smoke test"

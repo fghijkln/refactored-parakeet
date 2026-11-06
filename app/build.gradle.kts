@@ -16,8 +16,8 @@ android {
         applicationId = "dev.parakeet.agent"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = (project.findProperty("parakeet.version") as String?) ?: "0.1.0"
+        versionCode = 2
+        versionName = (project.findProperty("parakeet.version") as String?) ?: "0.1.1"
         ndk { abiFilters += parakeetAbis }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -38,8 +38,15 @@ android {
         debug {
             signingConfig = signingConfigs.getByName("parakeet")
         }
+        // The shipped APK. Not debuggable: a debuggable app runs ART without
+        // its AOT/JIT optimisations for app *and* WebView glue code, turns on
+        // WebView remote debugging and JDWP, which is measurably slower on
+        // every frame. R8 shrinks and optimises the Kotlin/AndroidX code.
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            isDebuggable = false
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("parakeet")
         }
     }
@@ -73,6 +80,7 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("androidx.webkit:webkit:1.12.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }

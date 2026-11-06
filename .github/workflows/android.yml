@@ -16,6 +16,7 @@ concurrency:
 env:
   NODE_VERSION: "24"
   GRADLE_VERSION: "8.11.1"
+  APP_VERSION: "0.1.1"
 
 jobs:
   runtime:
@@ -93,18 +94,23 @@ jobs:
       - name: Unit tests
         run: gradle --no-daemon :app:testDebugUnitTest
 
+      # Release build type: R8-minified, not debuggable (see app/build.gradle.kts).
       - name: APK (arm64-v8a, the product)
         run: |
-          gradle --no-daemon :app:assembleDebug -Pparakeet.abis=arm64-v8a
+          gradle --no-daemon :app:assembleRelease -Pparakeet.abis=arm64-v8a -Pparakeet.version=$APP_VERSION
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/parakeet-agent-v0.1.0-arm64-v8a.apk
+          cp app/build/outputs/apk/release/app-release.apk dist/parakeet-agent-v$APP_VERSION-arm64-v8a.apk
 
       - name: APK (arm64-v8a + x86_64, for emulators)
         run: |
-          gradle --no-daemon :app:assembleDebug -Pparakeet.abis=arm64-v8a,x86_64
-          cp app/build/outputs/apk/debug/app-debug.apk dist/parakeet-agent-v0.1.0-universal.apk
+          gradle --no-daemon :app:assembleRelease -Pparakeet.abis=arm64-v8a,x86_64 -Pparakeet.version=$APP_VERSION
+          cp app/build/outputs/apk/release/app-release.apk dist/parakeet-agent-v$APP_VERSION-universal.apk
           ls -la dist
-          unzip -l dist/parakeet-agent-v0.1.0-arm64-v8a.apk | grep -E 'lib/|assets/' | head -40
+          unzip -l dist/parakeet-agent-v$APP_VERSION-arm64-v8a.apk | grep -E 'lib/|assets/|classes' | head -40
+          # The shipped APK must not be debuggable.
+          AAPT=$(ls $ANDROID_HOME/build-tools/*/aapt2 | tail -1)
+          $AAPT dump badging dist/parakeet-agent-v$APP_VERSION-arm64-v8a.apk | grep -E "^package|debuggable" || true
+          if $AAPT dump badging dist/parakeet-agent-v$APP_VERSION-arm64-v8a.apk | grep -q application-debuggable; then echo "FAIL: release APK is debuggable"; exit 1; fi
 
       - uses: actions/upload-artifact@v4
         with:
@@ -146,7 +152,7 @@ jobs:
           target: default
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -memory 4096
-          script: bash runtime/tests/emulator-smoke.sh dist/parakeet-agent-v0.1.0-universal.apk emulator-logs
+          script: bash runtime/tests/emulator-smoke.sh dist/parakeet-agent-v${{ env.APP_VERSION }}-universal.apk emulator-logs https://github.com/${{ github.repository }}/releases/download/v0.1.0/parakeet-agent-v0.1.0-universal.apk
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -156,7 +162,7 @@ jobs:
           retention-days: 14
 
   release:
-    name: GitHub Release v0.1.0
+    name: GitHub Release
     needs: [apk, emulator]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -166,18 +172,20 @@ jobs:
           name: parakeet-apk
           path: dist
 
-      - name: Publish / update release v0.1.0
+      - name: Publish / update release v${{ env.APP_VERSION }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.0
+          tag_name: v${{ env.APP_VERSION }}
           target_commitish: ${{ github.sha }}
-          name: Parakeet Agent v0.1.0
+          name: Parakeet Agent v${{ env.APP_VERSION }}
           prerelease: true
           files: dist/*.apk
           body: |
             Android agent app: DeepSeek Harness on an embedded Node 24 (Termux build, Bionic), KernelSU root shell tool, any-vendor model provider.
 
-            * `parakeet-agent-v0.1.0-arm64-v8a.apk` — for phones (arm64).
-            * `parakeet-agent-v0.1.0-universal.apk` — arm64 + x86_64 (emulators).
+            * `parakeet-agent-v${{ env.APP_VERSION }}-arm64-v8a.apk` — for phones (arm64).
+            * `parakeet-agent-v${{ env.APP_VERSION }}-universal.apk` — arm64 + x86_64 (emulators).
 
-            Debug/self-signed build from commit ${{ github.sha }}. Verified in CI: Linux smoke test of the shipped DSH tree, unit tests, and an x86_64 Android emulator boot of the runtime. NOT verified on a real KernelSU device — see README.
+            v0.1.1 — smoother startup and scrolling: non-debuggable R8 release build, no main-thread disk/Keystore work, runtime extracted once per install with progress, no extra Node self-test on normal launches, V8 compile cache + boot-time fs memoisation, node at nice +4 with a RAM-sized heap cap, WebView without remote debugging and with GPU-heavy backdrop blurs replaced by opaque fills, bounded log screen with startup timings (Menu → Logs). Installs over v0.1.0 (same signing key).
+
+            Release build (R8, not debuggable), self-signed with the repo's public key, from commit ${{ github.sha }}. Verified in CI: Linux smoke test of the shipped DSH tree, unit tests, and an x86_64 Android emulator boot of the runtime. NOT verified on a real KernelSU device — see README.

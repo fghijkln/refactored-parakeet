@@ -55,6 +55,23 @@ for d in node_modules/@deepseek-ai/libreoffice-kit-wasm/assets node_modules/@dee
   [ -e "$d" ] && echo "pruned dir: $d" && rm -rf "$d"
 done
 find node_modules \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' -o -name '*.tsbuildinfo' \) -type f -delete
+# ---- prune files nothing loads at runtime (fewer files = faster first-launch
+# extraction on the phone, and a smaller tree for DSH's boot-time scans).
+# @deepseek-ai/* and @parakeet/* are left whole: DSH reads Markdown
+# (instructions, skills, presets) from its own packages at runtime.
+# LICENSE/NOTICE files are always kept.
+PRUNE_BEFORE=$(find node_modules -type f | wc -l)
+find node_modules -type f \( -iname 'README*' -o -iname 'CHANGELOG*' -o -iname 'HISTORY*' -o -iname '*.md' -o -iname '*.markdown' \) \
+  ! -ipath '*/LICENSE*' ! -iname 'LICENSE*' ! -iname 'NOTICE*' \
+  ! -path 'node_modules/@deepseek-ai/*' ! -path 'node_modules/@parakeet/*' -delete
+find node_modules -type d \( -name test -o -name tests -o -name __tests__ -o -name .github -o -name benchmark -o -name benchmarks -o -name example -o -name examples \) \
+  ! -path 'node_modules/@deepseek-ai/*' ! -path 'node_modules/@parakeet/*' -prune -exec rm -rf {} +
+# TypeScript sources shipped next to their compiled JS (never executed).
+for p in openai zod @anthropic-ai/sdk ajv; do
+  [ -d "node_modules/$p/src" ] && find "node_modules/$p/src" -type f -name '*.ts' -delete && find "node_modules/$p/src" -type d -empty -delete
+done
+rm -rf node_modules/@types
+echo "pruned $((PRUNE_BEFORE - $(find node_modules -type f | wc -l))) runtime-unused files"
 # .bin holds symlinks only; nothing on Android execs them (there is no exec
 # from the data dir), and the zip should carry no symlinks.
 find node_modules -type d -name .bin -prune -exec rm -rf {} +

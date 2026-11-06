@@ -25,7 +25,7 @@ or DSH's native DeepSeek adapter. DSH plugins install and run unmodified.
 | KernelSU grant flow, `su` as granted app, root commands on a real device | **Not verified** — no KernelSU device is available to CI. The code paths are unit-tested with a fake `su` |
 
 See the CI run summary on the [Actions page](../../actions) and the APKs on the
-[v0.1.0 release](../../releases/tag/v0.1.0).
+[v0.1.1 release](../../releases/tag/v0.1.1).
 
 ## Architecture
 
@@ -114,10 +114,42 @@ needs for plugin installs), prunes native code / types / maps, applies `patch_ru
 the root-shell plugin, and zips it to `assets/dsh-bundle.zip` (stored uncompressed in
 the APK). The app extracts it once per app version.
 
+### Performance (v0.1.1)
+
+* **Release build.** The shipped APK is the R8-minified, non-debuggable
+  `release` build type (v0.1.0 shipped `assembleDebug`: a debuggable app runs
+  ART without its compiled-code optimisations, including the WebView's Java
+  side, and has WebView remote debugging and JDWP on).
+* **Nothing blocking the UI thread.** Extraction, symlinks, config and
+  Keystore (EncryptedSharedPreferences) reads, process spawn and log reading
+  all run on background threads; `stop`/`restart` never wait for node on the
+  main thread. Debug builds turn on StrictMode (log-only).
+* **Extraction once per install** (stamp = version + install time), into a
+  temp dir that is renamed into place, old tree deleted in the background;
+  progress shown in the status strip. ~2.3k files nothing loads (READMEs,
+  tests, TS sources, `@types`) are pruned from the bundle.
+* **Node boot.** No separate self-test node start on ordinary launches (only
+  right after extraction); V8 compile cache (`NODE_COMPILE_CACHE` in
+  `cacheDir`); `dsh/launcher/perf-preload.mjs` memoises the ~5k
+  `existsSync`/package.json reads DSH's boot makes under the read-only bundle
+  dir; `--max-old-space-size` = RAM/4 clamped to 768–2048 MB; node runs at
+  `nice +4` so it yields to the UI and the WebView renderer.
+* **WebView.** Hardware-accelerated window, no extra layer, offscreen
+  pre-raster, unused features off, remote debugging only in debug builds, and
+  the page is never reloaded on resume (only when the server's URL changes).
+  Back moves the app to the background instead of destroying the WebView.
+  DSH's desktop `backdrop-filter: blur(40px)` menus/masks are replaced by the
+  same colours made opaque (`Perf.CSS`), a common mobile scroll-jank source.
+* **Logs.** Server output is written to `dsh.log` with batched flushes (capped
+  at 4 MB per run); after the server is up a release build only copies
+  warnings/errors to logcat. Menu → **Logs** reads only the last 96 KB, off
+  the UI thread, and shows the **startup phase timings** of the last 10 boots
+  (`extract`, `links`, `config`, `selftest`, `spawn`, `spawn->ready`, `total`, ms).
+
 ## KernelSU setup
 
 1. Install KernelSU (or KernelSU Next / SukiSU) on your device and its manager app.
-2. Install the APK (`parakeet-agent-v0.1.0-arm64-v8a.apk`) and open it.
+2. Install the APK (`parakeet-agent-v0.1.1-arm64-v8a.apk`) and open it.
 3. Tap **Check / request root (KernelSU)**. The app runs `su -c id`.
    If KernelSU is installed but this app is not granted, the button opens the
    manager: go to **Superuser**, find **Parakeet Agent**, allow it, and tap the
@@ -270,7 +302,7 @@ DSH 插件无需修改即可安装运行。
 ### KernelSU 设置
 
 1. 设备安装 KernelSU(或 KernelSU Next / SukiSU)及其管理器。
-2. 安装 `parakeet-agent-v0.1.0-arm64-v8a.apk` 并打开。
+2. 安装 `parakeet-agent-v0.1.1-arm64-v8a.apk` 并打开。
 3. 点击 **Check / request root (KernelSU)**(执行 `su -c id`)。若未授权,应用会打开管理器:
    在 **超级用户** 页找到 **Parakeet Agent** 并允许,再点一次按钮,状态栏显示
    `Root: granted (uid 0)`。

@@ -30,6 +30,7 @@ object Runtime {
     fun configFile(ctx: Context) = File(homeDir(ctx), "parakeet-config.json")
     fun pluginSettingsFile(ctx: Context) = File(homeDir(ctx), "parakeet-settings.json")
     fun logFile(ctx: Context) = File(ctx.filesDir, "dsh.log")
+    fun timingsFile(ctx: Context) = File(ctx.filesDir, "boot-timings.txt")
     fun libLinkDir(ctx: Context) = File(ctx.filesDir, "termux-lib")
 
     /**
@@ -98,38 +99,91 @@ object Runtime {
     fun nodePresent(ctx: Context) = nodeBinary(ctx).canExecute()
 
     /**
-     * Unzip `assets/dsh-bundle.zip` into `filesDir/dsh` once per app version.
-     * Returns true when extraction ran (first launch or upgrade).
+     * What the extracted tree must match. The install time is part of it, so
+     * a reinstall of the same version (dev builds, CI) still re-extracts, but
+     * an ordinary launch never touches the 13k-file tree.
      */
-    fun ensureRuntime(ctx: Context, force: Boolean = false): Boolean {
+    fun bundleStamp(versionName: String, versionCode: Int, lastUpdateTime: Long) = "$versionName:$versionCode:$lastUpdateTime"
+
+    private fun currentStamp(ctx: Context): String {
+        val updated = try { ctx.packageManager.getPackageInfo(ctx.packageName, 0).lastUpdateTime } catch (_: Exception) { 0L }
+        return bundleStamp(BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE, updated)
+    }
+
+    /** True when the extracted runtime matches this install (cheap: one small file read). */
+    fun runtimeCurrent(ctx: Context): Boolean {
+        val stamp = File(runtimeDir(ctx), STAMP)
+        return stamp.isFile && launcher(ctx).isFile && stamp.readText() == currentStamp(ctx)
+    }
+
+    /**
+     * Unzip `assets/dsh-bundle.zip` into `filesDir/dsh` once per install.
+     * Returns true when extraction ran (first launch or upgrade).
+     *
+     * Extracts into `dsh.tmp` and renames, so a kill mid-way never leaves a
+     * half tree that looks current; the previous tree is renamed aside and
+     * deleted on a background thread instead of blocking boot. Directories are
+     * created once each, and [onProgress] gets 0..100 from compressed bytes read.
+     */
+    fun ensureRuntime(ctx: Context, force: Boolean = false, onProgress: (Int) -> Unit = {}): Boolean {
         val dir = runtimeDir(ctx)
-        val stamp = File(dir, STAMP)
-        val want = "${BuildConfig.VERSION_NAME}:${BuildConfig.VERSION_CODE}"
-        if (!force && stamp.isFile && stamp.readText() == want) return false
+        if (!force && runtimeCurrent(ctx)) return false
+        val want = currentStamp(ctx)
         Log.i(TAG, "extracting DSH runtime -> $dir")
-        dir.deleteRecursively()
-        dir.mkdirs()
+        val tmp = File(ctx.filesDir, "dsh.tmp")
+        tmp.deleteRecursively()
+        tmp.mkdirs()
+        val root = tmp.canonicalPath + File.separator
+        val total = try { ctx.assets.openFd(BUNDLE_ASSET).use { it.length } } catch (_: Exception) { -1L }
+        val made = HashSet<String>()
+        val buf = ByteArray(256 * 1024)
+        var lastPct = -1
         ctx.assets.open(BUNDLE_ASSET).use { raw ->
-            ZipInputStream(raw.buffered()).use { zip ->
+            val counted = CountingInputStream(raw.buffered(256 * 1024))
+            ZipInputStream(counted).use { zip ->
                 while (true) {
                     val entry = zip.nextEntry ?: break
-                    val target = File(dir, entry.name).canonicalFile
-                    // Zip-slip guard: an entry must stay under dir.
-                    if (!target.path.startsWith(dir.canonicalPath + File.separator)) {
+                    val target = File(tmp, entry.name).canonicalFile
+                    // Zip-slip guard: an entry must stay under the extraction dir.
+                    if (!target.path.startsWith(root)) {
                         throw SecurityException("bundle entry escapes runtime dir: ${entry.name}")
                     }
                     if (entry.isDirectory) {
-                        target.mkdirs()
+                        if (made.add(target.path)) target.mkdirs()
                     } else {
-                        target.parentFile?.mkdirs()
-                        FileOutputStream(target).use { out -> zip.copyTo(out, 64 * 1024) }
+                        val parent = target.parentFile!!
+                        if (made.add(parent.path)) parent.mkdirs()
+                        FileOutputStream(target).use { out ->
+                            while (true) {
+                                val n = zip.read(buf)
+                                if (n < 0) break
+                                out.write(buf, 0, n)
+                            }
+                        }
                     }
-                    zip.closeEntry()
+                    if (total > 0) {
+                        val pct = (counted.count * 100 / total).toInt().coerceIn(0, 100)
+                        if (pct != lastPct) { lastPct = pct; onProgress(pct) }
+                    }
                 }
             }
         }
-        stamp.writeText(want)
+        File(tmp, STAMP).writeText(want)
+        val old = File(ctx.filesDir, "dsh.old-${System.nanoTime()}")
+        if (dir.exists() && !dir.renameTo(old)) dir.deleteRecursively()
+        if (!tmp.renameTo(dir)) throw java.io.IOException("could not move extracted runtime into place")
+        // Old trees (this one and any left by a kill) go away off the boot path.
+        Thread({
+            ctx.filesDir.listFiles()?.filter { it.name.startsWith("dsh.old-") }?.forEach { it.deleteRecursively() }
+        }, "parakeet-cleanup").apply { priority = Thread.MIN_PRIORITY }.start()
         return true
+    }
+
+    private class CountingInputStream(inner: java.io.InputStream) : java.io.FilterInputStream(inner) {
+        @Volatile var count = 0L
+        override fun read(): Int = super.read().also { if (it >= 0) count++ }
+        override fun read(b: ByteArray, off: Int, len: Int): Int = super.read(b, off, len).also { if (it > 0) count += it }
+        override fun skip(n: Long): Long = super.skip(n).also { count += it }
     }
 
     /** Write the two JSON files DSH and the root plugin read. */
@@ -169,6 +223,13 @@ object Runtime {
             "PARAKEET_NODE" to nodeBinary(ctx).absolutePath,
             // Android's CA store is hashed-PEM, readable by OpenSSL directly.
             "SSL_CERT_DIR" to "/system/etc/security/cacerts",
+            // V8 code cache for every module DSH loads; reused across boots
+            // and invalidated by Node per file content. Lives in cacheDir, so
+            // the system may clear it under storage pressure (it is rebuilt).
+            "NODE_COMPILE_CACHE" to File(ctx.cacheDir, "node-compile-cache").absolutePath,
+            // Read-only bundle root for dsh/launcher/perf-preload.mjs.
+            "PARAKEET_IMMUTABLE_ROOT" to runtimeDir(ctx).absolutePath,
+            "PARAKEET_TIMING" to "1",
         )
         if (!apiKey.isNullOrBlank()) env["PARAKEET_API_KEY"] = apiKey
         return env
@@ -189,9 +250,12 @@ object Runtime {
         val nativeDir = ctx.applicationInfo.nativeLibraryDir
         mapOf("node" to "libnode_exec.so", "bash" to "libbash_exec.so").forEach { (name, lib) ->
             val link = File(bin, name)
+            val target = File(nativeDir, lib).absolutePath
+            val cur = try { android.system.Os.readlink(link.absolutePath) } catch (_: Exception) { null }
+            if (cur == target) return@forEach
             link.delete()
             try {
-                android.system.Os.symlink(File(nativeDir, lib).absolutePath, link.absolutePath)
+                android.system.Os.symlink(target, link.absolutePath)
             } catch (e: Exception) {
                 Log.w(TAG, "symlink $name failed: $e")
             }
@@ -209,10 +273,46 @@ object Runtime {
 
     fun bashEnvFile(ctx: Context) = File(ctx.filesDir, "parakeet-bashenv.sh")
 
+    /**
+     * V8 old-space cap for the DSH process, from the device's RAM: a quarter
+     * of it, clamped to 768..2048 MB. V8's own default scales with physical
+     * memory and lets an idle agent sit on a large heap, which on a phone
+     * means memory pressure (kswapd, LMK kills of other apps) and long
+     * full-GC pauses on the server the UI is talking to.
+     */
+    fun heapLimitMb(totalMemBytes: Long): Int {
+        if (totalMemBytes <= 0) return 1024
+        return (totalMemBytes / (1024L * 1024L) / 4).toInt().coerceIn(768, 2048)
+    }
+
+    fun deviceHeapLimitMb(ctx: Context): Int {
+        val am = ctx.getSystemService(android.app.ActivityManager::class.java)
+        val mi = android.app.ActivityManager.MemoryInfo()
+        return heapLimitMb(runCatching { am.getMemoryInfo(mi); mi.totalMem }.getOrDefault(0L))
+    }
+
+    /** Node flags shared by the server and the self-test. */
+    fun nodeFlags(ctx: Context, heapMb: Int): List<String> {
+        val preload = File(runtimeDir(ctx), "perf-preload.mjs")
+        return buildList {
+            add("--expose-internals")
+            add("--max-old-space-size=$heapMb")
+            if (preload.isFile) { add("--import"); add(preload.toURI().toString()) }
+        }
+    }
+
+    /**
+     * Run node a little below the app's UI (nice +[NICE]), through toybox's
+     * `nice`, so a busy agent never competes on equal terms with the WebView
+     * renderer and the UI thread for the CPU. Children (bash, su) inherit it.
+     */
+    const val NICE = 4
+    fun nicePrefix(exists: (String) -> Boolean = { File(it).canExecute() }): List<String> =
+        if (exists("/system/bin/nice")) listOf("/system/bin/nice", "-n", NICE.toString()) else emptyList()
+
     /** Build the argv that boots the DSH web server on loopback. */
-    fun webArgv(ctx: Context, port: Int): List<String> = listOf(
-        nodeBinary(ctx).absolutePath,
-        "--expose-internals",
+    fun webArgv(ctx: Context, port: Int, heapMb: Int = deviceHeapLimitMb(ctx)): List<String> =
+        nicePrefix() + listOf(nodeBinary(ctx).absolutePath) + nodeFlags(ctx, heapMb) + listOf(
         launcher(ctx).absolutePath,
         "web",
         "--no-open",

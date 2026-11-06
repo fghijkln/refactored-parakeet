@@ -62,5 +62,7 @@ if (process.env.PARAKEET_CONFIG && existsSync(process.env.PARAKEET_CONFIG)) {
   process.argv.splice(2, process.argv.length - 2, ...rest);
 }
 
+// Startup timing for the app's diagnostics (ms since node started).
+if (process.env.PARAKEET_TIMING === '1') console.log(`parakeet-timing: node launcher-ready=${Math.round(performance.now())}`);
 const { runCli } = await import(join(nodeModules, '@deepseek-ai/dsh/lib/bin.js'));
 await runCli(packageManager === undefined ? {} : { packageManager });

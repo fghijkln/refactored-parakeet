@@ -39,6 +39,9 @@ class SettingsActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = SecretStore(this)
+        // Plain prefs are cheap and usually cached; the encrypted key store
+        // (Keystore + Tink init, 100+ ms on many phones) is read off the UI
+        // thread below and filled in when ready.
         val cfg = store.load()
 
         val form = LinearLayout(this).apply {
@@ -78,11 +81,20 @@ class SettingsActivity : Activity() {
 
         label("API key (stored encrypted on this device)")
         apiKey = EditText(this).apply {
-            setText(store.apiKey() ?: "")
+            isEnabled = false
+            hint = "loading…"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            hint = "sk-…"
         }
         form.addView(apiKey)
+        Thread({
+            val key = store.apiKey()
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                apiKey.setText(key ?: "")
+                apiKey.hint = "sk-…"
+                apiKey.isEnabled = true
+            }
+        }, "parakeet-settings-load").start()
 
         label("Display name (optional)")
         displayName = EditText(this).apply { setText(cfg.displayName) }
@@ -137,10 +149,16 @@ class SettingsActivity : Activity() {
             Toast.makeText(this, errors.joinToString("\n"), Toast.LENGTH_LONG).show()
             return
         }
+        val key = apiKey.text.toString()
+        val keyLoaded = apiKey.isEnabled
         store.save(cfg)
-        store.setApiKey(apiKey.text.toString())
-        Runtime.writeConfig(this, cfg)
-        DshService.stop(this)
+        val app = applicationContext
+        // Keystore write + config files off the UI thread; the restart follows.
+        Thread({
+            if (keyLoaded) store.setApiKey(key)
+            Runtime.writeConfig(app, cfg)
+            DshService.restart(app)
+        }, "parakeet-settings-save").start()
         startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP))
         Toast.makeText(this, "Saved. Restarting runtime…", Toast.LENGTH_SHORT).show()
         finish()

@@ -33,6 +33,7 @@ cp -r "$REPO/dsh/plugin-root-shell/test" "$P/test"
 (cd "$P" && node --test test/*.test.mjs)
 rm -rf "$P/test"
 node --test "$HERE/parakeet-config.test.mjs"
+node --test "$HERE/perf-preload.test.mjs"
 pass "unit tests"
 
 # fake su: honours -c, otherwise is an interactive sh (persistent mode)
@@ -72,6 +73,27 @@ echo "GET $URL -> $CODE"
 [ "$CODE" = "200" ] || { echo "FAIL: web UI returned $CODE"; exit 1; }
 kill $WEB_PID; wait $WEB_PID 2>/dev/null || true
 pass "dsh web served the UI"
+
+echo "== 3b. boot timing: plain node vs. the app's flags (perf preload + compile cache)"
+boot_ms() { # prints ms from spawn to the URL banner
+  local log="$WORK/boot.log"; local s; s=$(date +%s%N)
+  node "$@" "$RT/launch.mjs" web --no-open --host 127.0.0.1 --port 0 > "$log" 2>&1 &
+  local pid=$!
+  for _ in $(seq 1200); do grep -q 'http://127.0.0.1' "$log" && break; kill -0 $pid 2>/dev/null || break; sleep 0.05; done
+  grep -q 'http://127.0.0.1' "$log" || { cat "$log"; echo "FAIL: boot with flags [$*] did not serve"; kill $pid 2>/dev/null; exit 1; }
+  echo $(( ($(date +%s%N) - s) / 1000000 ))
+  kill $pid; wait $pid 2>/dev/null || true
+}
+CC="$WORK/compile-cache"
+APPFLAGS=(--expose-internals --max-old-space-size=1024 --import "file://$RT/perf-preload.mjs")
+PARAKEET_IMMUTABLE_ROOT="$RT" NODE_COMPILE_CACHE="$CC" boot_ms "${APPFLAGS[@]}" > /dev/null # fills the compile cache
+for i in 1 2 3; do
+  B=$(boot_ms --expose-internals)
+  A=$(PARAKEET_IMMUTABLE_ROOT="$RT" NODE_COMPILE_CACHE="$CC" boot_ms "${APPFLAGS[@]}")
+  echo "boot run $i: before(plain)=${B}ms after(app flags)=${A}ms"
+done | tee "$WORK/boot-timing.txt"
+[ -n "${GITHUB_STEP_SUMMARY:-}" ] && { echo '### DSH boot time on Linux (ms to URL banner)'; echo '```'; cat "$WORK/boot-timing.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+pass "dsh web boots with the app's perf flags"
 
 echo "== 4. headless agent turn uses root_shell"
 echo '{"requireRootConfirm": false}' > "$PARAKEET_SETTINGS"
