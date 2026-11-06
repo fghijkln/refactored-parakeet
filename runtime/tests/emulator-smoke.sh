@@ -55,6 +55,10 @@ fi
 
 adb install -r -g "$APK" || { echo "FAIL: install"; exit 1; }
 adb logcat -c
+# `logcat -c` is not reliable on this emulator image: also read only lines
+# logged after this point, so the baseline's banner cannot satisfy the waits.
+SINCE=$(adb shell date +'%m-%d\ %H:%M:%S.000' | tr -d '\r')
+START_NS=$(date +%s%N)
 adb shell am start -W -n "$PKG/.MainActivity"
 
 # 1. the same binaries under the shell uid in /data/local/tmp, where a crash
@@ -86,12 +90,13 @@ sed -n 1,40p "$LOGS/linker.txt"
 
 # 2. the app boots DSH (first launch unzips the runtime; allow a few minutes).
 OK=""
-for i in $(seq 1 150); do
-  if adb logcat -d -s parakeet:I | grep -q "dsh web: http://127.0.0.1"; then OK=1; break; fi
-  if adb logcat -d -s parakeet:E | grep -q "Runtime exited\|Runtime failed\|No Node runtime"; then break; fi
-  sleep 4
+FIRST_MS=""
+for i in $(seq 1 1200); do
+  if adb logcat -d -T "$SINCE" -s parakeet:I | grep -q "dsh web: http://127.0.0.1"; then OK=1; FIRST_MS=$(( ($(date +%s%N) - START_NS) / 1000000 )); break; fi
+  if adb logcat -d -T "$SINCE" -s parakeet:E | grep -q "Runtime exited\|Runtime failed\|No Node runtime"; then break; fi
+  sleep 0.5
 done
-adb logcat -d -s parakeet:V > "$LOGS/logcat-parakeet.txt"
+adb logcat -d -T "$SINCE" -s parakeet:V > "$LOGS/logcat-parakeet.txt"
 adb logcat -d > "$LOGS/logcat-full.txt"
 adb shell run-as "$PKG" cat files/dsh.log > "$LOGS/dsh.log" 2>&1
 adb shell run-as "$PKG" cat files/dsh-home/parakeet.patch.yml > "$LOGS/parakeet.patch.yml" 2>&1
@@ -126,8 +131,8 @@ echo "GET web UI via adb forward -> $CODE"
 [ "$CODE" = "200" ] || { echo "FAIL: web UI returned $CODE"; exit 1; }
 grep -q "did not activate" "$LOGS/dsh.log" && { echo "WARN: some DSH plugins did not activate on Android:"; grep -A3 "did not activate" "$LOGS/dsh.log"; }
 # 4. startup timing of this build, measured like the baseline.
-FIRST=$(grep -o 'parakeet-timing:.*' "$LOGS/logcat-parakeet.txt" | tr '\n' ' ')
-echo "after (this build) first launch: see logcat  $FIRST" | tee -a "$TIMING"
+FIRST=$(grep -o 'parakeet-timing: [a-z].*=.*total=[0-9]*' "$LOGS/logcat-parakeet.txt" | tail -1)
+echo "after (this build) first launch: ${FIRST_MS:-?} ms to banner (includes the shell-uid exec probes running alongside)  $FIRST" | tee -a "$TIMING"
 time_launch "after (this build) warm relaunch"
 time_launch "after (this build) warm relaunch 2"
 adb shell pm clear "$PKG" > /dev/null
