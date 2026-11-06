@@ -78,6 +78,52 @@ class HostLaunchTest {
         assertTrue(File(owned, "bin/node").readText().contains("--expose-internals"))
     }
 
+    private val pem = "-----BEGIN CERTIFICATE-----\nMIIBfakeAAA=\n-----END CERTIFICATE-----"
+
+    @Test fun neverPointsAtTheTermuxPrefix() {
+        val (rootfs, native, links) = fixture()
+        val ca = Files.createTempDirectory("cacerts").toFile()
+        // Android's cacerts files: one PEM block followed by a text dump.
+        File(ca, "b0000000.0").writeText("$pem\nCertificate:\n    Data: ...\n")
+        File(ca, "a0000000.0").writeText(pem.replace("AAA", "BBB") + "\nCertificate: ...\n")
+        val plan = HostLaunch.prepare(rootfs, native, links, manifestArgv,
+            mapOf("SSL_CERT_DIR" to "/data/data/com.termux/files/usr/etc/tls/certs", "OPENSSL_CONF" to "/data/data/com.termux/files/usr/etc/tls/openssl.cnf"),
+            hostShell = "/bin/sh", caSources = listOf(File(ca, "missing"), ca))
+        val env = plan.environment
+        val owned = File(rootfs.canonicalFile, "opt/dsh-app/direct")
+        assertEquals(File(owned, "tls/openssl.cnf").path, env["OPENSSL_CONF"])
+        assertEquals(File(owned, "tls/cert.pem").path, env["SSL_CERT_FILE"])
+        assertEquals(File(owned, "tls/certs").path, env["SSL_CERT_DIR"])
+        assertEquals(File(owned, "ossl-modules").path, env["OPENSSL_MODULES"])
+        assertEquals(File(owned, "engines-3").path, env["OPENSSL_ENGINES"])
+        for (k in listOf("OPENSSL_CONF", "CTLOG_FILE", "INPUTRC")) assertTrue("$k exists", File(env[k]!!).isFile)
+        assertTrue(File(env["SSL_CERT_DIR"]!!).isDirectory)
+        assertFalse(env.values.any { it.contains("com.termux") })
+        assertTrue(File(owned, "tls/openssl.cnf").readText().contains("nodejs_conf = openssl_init"))
+        // file-name order, text dumps dropped
+        assertEquals(pem.replace("AAA", "BBB") + "\n" + pem + "\n", File(owned, "tls/cert.pem").readText())
+        assertFalse(plan.argv.contains("--use-bundled-ca"))
+        // wrappers default every override for children launched with a cleared environment
+        for (name in listOf("node", "bash", "sh")) {
+            val text = File(owned, "bin/$name").readText()
+            for (k in listOf("HOME", "TMPDIR", "LD_LIBRARY_PATH", "OPENSSL_CONF", "OPENSSL_MODULES", "SSL_CERT_FILE", "SSL_CERT_DIR")) {
+                assertTrue("$name defaults $k", text.contains("if [ -z \"\${$k:-}\" ]; then export $k="))
+            }
+            assertFalse(text.contains("com.termux"))
+        }
+        assertTrue(File(owned, "bin/bash").readText().contains("--noprofile --rcfile"))
+        assertTrue(File(owned, "bin/sh").readText().contains("--posix --noprofile"))
+    }
+
+    @Test fun withoutASystemStoreNodeUsesItsBundledRoots() {
+        val (rootfs, native, links) = fixture()
+        val empty = Files.createTempDirectory("nocerts").toFile()
+        val plan = HostLaunch.prepare(rootfs, native, links, manifestArgv, emptyMap(), hostShell = "/bin/sh", caSources = listOf(empty))
+        assertTrue(plan.argv.contains("--use-bundled-ca"))
+        assertNull(plan.environment["SSL_CERT_FILE"])
+        assertTrue(File(rootfs, "opt/dsh-app/direct/bin/node").readText().contains("--use-bundled-ca"))
+    }
+
     @Test fun reportsMissingNode() {
         val (rootfs, native, _) = fixture()
         File(native, HostLaunch.NODE_LIB).delete()

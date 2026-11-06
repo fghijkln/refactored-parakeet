@@ -1,6 +1,6 @@
 # Parakeet 0.2 (customized dsh-Go): runtime for both ABIs and both languages, Linux host
 # smoke, Flutter analyze/test, Gradle unit tests, release APKs (zh + en, arm64 + x86_64),
-# APK checks, x86_64 emulator smoke, and the v0.2.0 prerelease from a green main.
+# APK checks, x86_64 emulator smoke, and the v$APP_VERSION prerelease from a green main.
 name: parakeet
 
 on:
@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  APP_VERSION: 0.2.0
+  APP_VERSION: 0.2.1
   FLUTTER_VERSION: 3.47.7
   NODE_VERSION: 24.22.1
   GRADLE_VERSION: 9.3.1
@@ -317,7 +317,8 @@ jobs:
           retention-days: 14
 
   release:
-    name: Prerelease v0.2.0
+    # Job names cannot read env: the tag and title come from APP_VERSION.
+    name: Prerelease (APP_VERSION)
     needs: [runtime, flutter, android-jvm, apk, emulator]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
@@ -337,6 +338,8 @@ jobs:
           cat > notes.md <<EOF
           Parakeet v$APP_VERSION — deep customization of dsh-Go (AGPL-3.0, upstream ccch1mneyyy/dsh-Go@cf2f7c8).
 
+          Changes in 0.2.1: the engine no longer dies at startup on phones that also have Termux installed (\`OpenSSL configuration error ... openssl.cnf: Permission denied\`). Termux's node/bash have Termux's /data/data/com.termux/files/usr paths compiled in; the app now gives OpenSSL its own config, modules/engines dirs and a CA bundle built from Android's system certificates, and its node/bash/sh wrappers default HOME, TMPDIR, LD_LIBRARY_PATH and these settings for child processes. The emulator smoke now plants an unreadable Termux tree and starts the app's own engine.
+
           * \`parakeet-v$APP_VERSION-zh-arm64-v8a.apk\` — 纯中文版 (arm64 phones)
           * \`parakeet-v$APP_VERSION-en-arm64-v8a.apk\` — English-only build (arm64 phones)
 
@@ -347,7 +350,7 @@ jobs:
           - Known gap: in the English APK, agent-facing text that upstream writes in Chinese only (the bundled dsh-go-ui / dsh-go-plugin / dsh-go-support skills, the phone-control tool descriptions and results, the AGENTS.md section and safe-mode report) is still Chinese; the app UI and the user guide skill are English.
           - applicationId dev.parakeet.dshgo (installs beside dsh-Go and Parakeet 0.1.x), release build, not debuggable, self-signed with the repo's Parakeet key.
 
-          Built from ${{ github.sha }}. Verified in CI: runtime build for arm64-v8a/x86_64 in both languages, Linux host smoke, Flutter analyze + tests, Gradle unit tests, APK checks (not debuggable, no upstream hosts, no removed-feature strings, one UI language per APK; the documented exceptions are in tooling/parakeet_apk_check.py ALLOW), x86_64 emulator smoke (API 30: host engine boots and serves, root plugin registered, fake-su root probe, APK installs and launches). Not verified on a real arm64 / KernelSU device.
+          Built from ${{ github.sha }}. Verified in CI: runtime build for arm64-v8a/x86_64 in both languages, Linux host smoke, Flutter analyze + tests, Gradle unit tests, APK checks (not debuggable, no upstream hosts, no removed-feature strings, one UI language per APK; the documented exceptions are in tooling/parakeet_apk_check.py ALLOW), x86_64 emulator smoke (API 30, with an unreadable fake Termux tree at /data/data/com.termux: host engine boots and serves, root plugin registered, fake-su root probe, APK installs and launches, the app's own engine unpacks, starts and answers HTTP). Not verified on a real arm64 / KernelSU device.
           EOF
           sed -i 's/^          //' notes.md
           gh release delete "v$APP_VERSION" -R "$REPO" --cleanup-tag -y 2>/dev/null || true

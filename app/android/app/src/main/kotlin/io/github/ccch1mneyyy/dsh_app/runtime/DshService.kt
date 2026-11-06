@@ -92,7 +92,13 @@ class DshService : Service() {
                 acquireWakeLock()
                 registerNetworkCallback(controller)
                 logBackgroundPolicy(controller)
-                controller.startProcess()
+                // CI (the emulator smoke, through adb as root: this service is not exported) starts the
+                // engine without going through onboarding: unpack the bundled runtime first if needed.
+                if (intent?.getBooleanExtra(EXTRA_INSTALL_FIRST, false) == true) {
+                    controller.install { error -> if (error == null) controller.startProcess() else stopSelf() }
+                } else {
+                    controller.startProcess()
+                }
             }
         }
         return START_NOT_STICKY
@@ -174,6 +180,9 @@ class DshService : Service() {
 
         /** With [ACTION_INSTALL_DONE]: the unpack finished (true) or stopped. */
         const val EXTRA_INSTALL_OK = "ok"
+
+        /** With [ACTION_START]: unpack the bundled runtime first when it is not installed. */
+        const val EXTRA_INSTALL_FIRST = "install_first"
         private const val CHANNEL_ID = "dsh-runtime"
         private const val NOTIFICATION_ID = 3080
         private const val ALERT_ID = 3081
