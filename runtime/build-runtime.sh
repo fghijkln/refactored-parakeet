@@ -57,8 +57,9 @@ PRUNE_DEV_METADATA="${PRUNE_DEV_METADATA:-1}"   # drop *.map / *.d.ts from node_
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-1767225600}"  # 2026-01-01T00:00:00Z, fixed tar mtimes
 
 UBUNTU_MIRROR="https://mirrors.tuna.tsinghua.edu.cn/ubuntu-cdimage/ubuntu-base/releases/24.04/release"
-NODE_MIRROR="https://npmmirror.com/mirrors/node"
-NPM_REGISTRY="https://registry.npmmirror.com"
+# Mirrors: npmmirror by default (China); CI on GitHub runners sets the official upstreams.
+NODE_MIRROR="${NODE_MIRROR:-https://npmmirror.com/mirrors/node}"
+NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
 TERMUX_REPO="https://packages.termux.dev/apt/termux-main"
 UBUNTU_ARCHIVE_AMD64="https://mirrors.tuna.tsinghua.edu.cn/ubuntu"        # InRelease verified with gpgv
 UBUNTU_ARCHIVE_ARM64="https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports"
@@ -236,6 +237,9 @@ npm_prefix_flags() {  # $1 = npm cpu, $2 = prefix dir; sets the caller's npm_fla
   npm_flags=(
     --prefix "$2" --cpu="$1" --os=linux --libc=glibc
     --registry="$NPM_REGISTRY" --cache "$CACHE/npm"
+    # The pinned locks resolve to registry.npmmirror.com; fetch the same tarballs (same
+    # integrity hashes) from $NPM_REGISTRY instead when it points elsewhere.
+    --replace-registry-host=registry.npmmirror.com
     --userconfig "$WORK/empty-user-npmrc" --globalconfig "$WORK/empty-global-npmrc"
     --ignore-scripts --no-audit --no-fund --update-notifier=false --loglevel=warn
   )

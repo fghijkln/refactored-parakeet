@@ -23,9 +23,10 @@ abstract final class AppLocale {
   /// Parakeet: the one locale this APK was built with (see build_locale.dart).
   static const Locale build = parakeetLocale == 'en' ? en : zhCN;
 
-  /// Locales MaterialApp offers: only the build's language. zh_CN (not bare
-  /// zh) keeps CJK glyphs Chinese on non-Chinese systems.
-  static const supported = [build];
+  /// Locales MaterialApp offers: only the build's language in an APK. zh_CN (not
+  /// bare zh) keeps CJK glyphs Chinese on non-Chinese systems
+  /// (typography.dart「汉字字形」).
+  static const supported = parakeetLocaleFixed ? [build] : [zhCN, en];
 
   static Locale _locale = build;
   static L10n _l10n = lookupL10n(build);
@@ -37,17 +38,26 @@ abstract final class AppLocale {
 
   static L10n get l10n => _l10n;
 
-  /// Switches [appL10n] to [locale] (zh_CN or en).
+  /// Switches [appL10n] to [locale] (zh_CN or en). A single-language APK
+  /// stays on its build language.
   static void use(Locale locale) {
-    const next = build;
+    final next = parakeetLocaleFixed ? build : (locale.languageCode == 'en' ? en : zhCN);
     if (next == _locale) return;
     _locale = next;
     _l10n = lookupL10n(next);
   }
 
   /// Chinese for any Chinese system language, English for everything else.
-  /// Parakeet: always the build's language, whatever the system or a stale choice says.
-  static Locale resolve(Locale? chosen, List<Locale>? system) => build;
+  /// Parakeet: a single-language APK always resolves to its build language.
+  static Locale resolve(Locale? chosen, List<Locale>? system) {
+    if (parakeetLocaleFixed) return build;
+    if (chosen != null) return chosen.languageCode == 'en' ? en : zhCN;
+    for (final l in system ?? const <Locale>[]) {
+      if (l.languageCode == 'zh') return zhCN;
+      if (l.languageCode == 'en') return en;
+    }
+    return (system == null || system.isEmpty) ? zhCN : en;
+  }
 }
 
 /// UI text for code without a BuildContext. Follows the app language.

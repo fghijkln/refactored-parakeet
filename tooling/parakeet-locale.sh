@@ -28,6 +28,10 @@ if [[ "${SKIP_GEN_L10N:-0}" != 1 ]]; then
   ls "$APP/lib/l10n/gen"
 fi
 
+D="$APP/lib/parakeet/build_locale.dart"
+sed -i "s/^const String parakeetTreeLocale = '[a-z]*';/const String parakeetTreeLocale = '$LANG_ID';/" "$D"
+grep -q "parakeetTreeLocale = '$LANG_ID'" "$D"
+
 K="$APP/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/i18n/BuildLocale.kt"
 sed -i "s/const val LOCALE = \"[a-z]*\"/const val LOCALE = \"$LANG_ID\"/" "$K"
 grep -q "LOCALE = \"$LANG_ID\"" "$K"

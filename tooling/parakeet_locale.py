@@ -20,8 +20,6 @@ ET.register_namespace("tools", "http://schemas.android.com/tools")
 ET.register_namespace("android", "http://schemas.android.com/apk/res/android")
 ET.register_namespace("xliff", "urn:oasis:names:tc:xliff:document:1.2")
 
-ROOT, LANG = sys.argv[1], sys.argv[2]
-assert LANG in ("zh", "en")
 
 # Keys of features Parakeet removed (DeepSeek account sign-in, feedback, anonymous
 # usage statistics, forum / community / QQ group, app update checks, star prompt).
@@ -81,5 +79,8 @@ def merge_android(res):
             print("dropped res/%s" % name)
 
 
-blank_arb(os.path.join(ROOT, "app/lib/l10n/app_%s.arb" % LANG))
-merge_android(os.path.join(ROOT, "app/android/app/src/main/res"))
+if __name__ == "__main__":
+    ROOT, LANG = sys.argv[1], sys.argv[2]
+    assert LANG in ("zh", "en")
+    blank_arb(os.path.join(ROOT, "app/lib/l10n/app_%s.arb" % LANG))
+    merge_android(os.path.join(ROOT, "app/android/app/src/main/res"))

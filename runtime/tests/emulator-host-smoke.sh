@@ -91,6 +91,16 @@ if [ -n "$TOKEN" ]; then
   code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:38555/?token=$TOKEN")
   [ "$code" = 303 ] && pass "token exchange on Android -> 303" || fail "token exchange on Android -> $code"
   grep -q "\[parakeet-root-shell\] registered" "$LOGS/host-engine.log" && pass "root-shell plugin registered on Android" || fail "root-shell plugin not registered on Android"
+  # Root probe through a fake su (PARAKEET_SU, the override CI and the app use): the
+  # plugin's own su.js, run by the Termux node on Android, must see uid 0.
+  printf '%s\n' '#!/system/bin/sh' '[ "$1" = -c ] && shift' 'if [ "$1" = id ]; then echo "uid=0(root) gid=0(root) context=u:r:su:s0"; exit 0; fi' 'exec /system/bin/sh -c "$1"' > "$T/fakesu"
+  adb push "$T/fakesu" "$W/fakesu" > /dev/null
+  adb shell "chmod 755 $W/fakesu"
+  SUJS="$R/opt/dsh/node_modules/@parakeet/dsh-plugin-root-shell/lib/su.js"
+  probe=$(adb shell "cd $R && PARAKEET_SU=$W/fakesu LD_LIBRARY_PATH=$W/links:$W/lib $W/lib/libnode_exec.so --input-type=module -e \"import {probeRoot, runAsRoot} from '$SUJS'; const p = probeRoot(); console.log(JSON.stringify(p));\"" 2>&1 | tr -d '\r')
+  echo "$probe" | tee "$LOGS/root-probe.txt"
+  echo "$probe" | grep -q '"available":true' && echo "$probe" | grep -q '"uid":0' \
+    && pass "root-shell su.js probe sees uid 0 through a fake su on Android" || fail "root probe through fake su: $probe"
 else
   fail "host engine did not start on Android"; tail -60 "$LOGS/host-engine.log"
 fi
