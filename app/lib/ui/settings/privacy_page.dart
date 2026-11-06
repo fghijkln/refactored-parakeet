@@ -11,7 +11,6 @@ import '../../state/engine_settings_state.dart';
 import '../engine_settings/namespace_copy.dart';
 import '../engine_settings/schema_form.dart';
 import '../shell/page_frame.dart';
-import 'settings_widgets.dart';
 
 class PrivacyPage extends ConsumerWidget {
   const PrivacyPage({super.key});

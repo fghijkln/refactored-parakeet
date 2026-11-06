@@ -13,10 +13,8 @@ import '../../state/star_prompt.dart' show starLinkOpenerProvider;
 import '../../state/update_state.dart';
 import '../shell/brand_mark.dart';
 import '../shell/page_frame.dart';
-import '../star/star_prompt_dialog.dart' show openStarProject;
 import '../theme/app_icons.dart';
 import '../theme/theme.dart';
-import '../update/update_tiles.dart';
 import 'settings_widgets.dart';
 
 /// The installed version as the app shows it: `0.9.6 (10271234)`.

@@ -13,7 +13,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../l10n/l10n.dart';
+import '../../parakeet/phone_storage_access.dart';
+import '../../runtime/runtime_bridge.dart' show RuntimePhase;
+import '../../runtime/runtime_state.dart';
 import '../../state/connection_state.dart';
+import '../../state/engine_control.dart';
 import '../../state/sessions_state.dart' show localWorkspaceDir;
 import '../../state/settings_state.dart';
 import '../../state/workspaces_state.dart';
@@ -21,6 +25,7 @@ import '../common/app_sheet.dart';
 import '../common/breadcrumb_row.dart';
 import '../common/fade_in.dart';
 import '../common/list_page_row.dart';
+import '../common/risk_notice.dart';
 import '../common/sheet_title_bar.dart';
 import '../features/feature_kit.dart' show QuietSpinner;
 import '../features/feature_widgets.dart';
@@ -126,6 +131,27 @@ class DirectoryLocationsSheet extends ConsumerWidget {
       if (picked != null && navigator.mounted) navigator.pop(picked);
     }
 
+    // Parakeet: on this phone the host engine sees the real /sdcard, so phone storage is
+    // always offered; picking it asks Android for access first (Android 11+:
+    // 「所有文件访问」) and turns 访问手机文件 on.
+    Future<void> enableStorageAndBrowse() async {
+      final container = ProviderScope.containerOf(context, listen: false);
+      final ok = await confirmRisk(context, RiskNotices.phoneFiles);
+      if (!ok || !context.mounted) return;
+      final granted = await requestPhoneStorageAccess(container.read(runtimeBridgeProvider));
+      if (!context.mounted) return;
+      if (!granted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(l10n.hubSettingsStorageDenied)));
+        return;
+      }
+      await container.read(settingsProvider.notifier).setPhoneStorage(true);
+      // The engine's prompt names /sdcard only when the mode is on: restart a running engine.
+      if (container.read(localRuntimeProvider).status.phase == RuntimePhase.running) {
+        unawaited(EngineControl.restart(container));
+      }
+      if (context.mounted) await browse(phoneStorageRoot);
+    }
+
     Future<void> typePath() async {
       final path = await askFolderPath(context);
       if (path == null || !context.mounted) return;
@@ -158,6 +184,13 @@ class DirectoryLocationsSheet extends ConsumerWidget {
                     children: [
                       for (final s in shortcuts)
                         ListPageRow(icon: s.icon, title: s.title, subtitle: s.subtitle, onTap: () => browse(s.path)),
+                      if (local && !phoneStorage)
+                        ListPageRow(
+                          icon: AppIcons.phoneStorage,
+                          title: l10n.remoteDirectoryPhoneStorage,
+                          subtitle: phoneStorageRoot,
+                          onTap: enableStorageAndBrowse,
+                        ),
                     ],
                   ),
                 if (canBrowse && places.isNotEmpty)

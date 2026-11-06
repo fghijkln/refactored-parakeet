@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../l10n/l10n.dart';
+import '../../parakeet/phone_storage_access.dart';
 import '../../runtime/runtime_state.dart';
 import '../../state/connection_state.dart';
 import '../../state/engine_settings_state.dart' show describeSettingsError;
@@ -124,14 +125,9 @@ class _PermissionPageState extends ConsumerState<PermissionPage> {
     if (next) {
       final ok = await confirmRisk(context, RiskNotices.phoneFiles);
       if (!ok || !mounted) return;
-      final bridge = ref.read(runtimeBridgeProvider);
-      var access = await bridge.requestStorage();
-      if (!access.granted && access.permission && !access.legacy) {
-        // Device ignores legacy storage: fall back to the "All files access" page.
-        await bridge.openAllFilesAccess();
-        access = await bridge.storageStatus();
-      }
-      if (!access.granted) {
+      // Parakeet: legacy prompt, then Android 11+'s 「所有文件访问」 page, re-read on return.
+      final granted = await requestPhoneStorageAccess(ref.read(runtimeBridgeProvider));
+      if (!granted) {
         if (mounted) _toast(l10n.hubSettingsStorageDenied);
         return;
       }

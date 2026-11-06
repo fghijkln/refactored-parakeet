@@ -5,7 +5,6 @@
 // counted, nothing is kept and no request is made.
 
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -82,10 +81,8 @@ class UsageStatsController extends Notifier<UsageStatsState> {
 
   /// The local day the share host said it collects nothing (404).
   String? _closedDay;
-  UsageDevice? _device;
   late Future<void> _loaded;
   Future<void> _writes = Future.value();
-  Future<void>? _sending;
 
   /// What was last written, so an unchanged ledger isn't written again.
   (String, String?, DateTime?, DateTime?, String?)? _saved;
@@ -194,7 +191,6 @@ class UsageStatsController extends Notifier<UsageStatsState> {
       _iidSince = null;
       _failedAt = null;
       _closedDay = null;
-      _device = null;
       _saved = null;
     }
     await _write((prefs) async {
@@ -224,72 +220,6 @@ class UsageStatsController extends Notifier<UsageStatsState> {
   /// the first failure (and for the day at a 404). Only one run at a time.
   /// Parakeet: anonymous usage statistics are removed; nothing is ever sent.
   Future<void> send() async {}
-
-  Future<void> _send() async {
-    if (!UsageBuild.active || !ref.mounted || !state.collecting) return;
-    final now = _now();
-    if (_failedAt case final at? when !now.isBefore(at) && now.difference(at) < retryGap) return;
-    if (_closedDay == usageDay(now)) return;
-    _closedDay = null;
-    final due = _ledger.due(now);
-    if (due.isEmpty) {
-      // Days too old or given up may have gone.
-      _save();
-      return;
-    }
-    final device = _device ??= await ref.read(usageDeviceProvider)();
-    if (!ref.mounted || !state.collecting) return;
-    final iid = _currentIid(now);
-    final http = ref.read(usageHttpProvider);
-    final endpoint = ref.read(usageEndpointProvider);
-    final lang = ref.read(usageLanguageProvider)();
-    for (final day in due) {
-      final record = _ledger.days[day];
-      if (record == null) continue;
-      final payload = usagePayload(iid: iid, day: day, record: record, device: device, lang: lang);
-      // The host would refuse it (400): not worth a request.
-      if (usageProblem(payload, now) != null) {
-        _ledger.drop(day);
-        continue;
-      }
-      int? status;
-      try {
-        status = await http.post(endpoint, jsonEncode(payload), timeout: timeout);
-      } catch (_) {
-        // Quietly: tried again the next time the app comes to the front.
-      }
-      // Turned off meanwhile: everything is gone already.
-      if (!ref.mounted || !state.collecting) return;
-      switch (UsageReply.of(status)) {
-        case UsageReply.sent:
-          _ledger.sent(day);
-        case UsageReply.refused:
-          _ledger.drop(day);
-        case UsageReply.closed:
-          _closedDay = usageDay(now);
-          _save();
-          return;
-        case UsageReply.later:
-          _ledger.failed(day);
-          _failedAt = now;
-          _save();
-          return;
-      }
-    }
-    _failedAt = null;
-    _save();
-  }
-
-  /// The install id, a new one when there is none or it is
-  /// [usageIidLifetime] old.
-  String _currentIid(DateTime now) {
-    final since = _iidSince;
-    if (_iid == null || since == null || now.difference(since) >= usageIidLifetime) {
-      _iid = newUsageIid();
-      _iidSince = now;
-    }
-    return _iid!;
-  }
 
   void _save() {
     final days = _ledger.encode();

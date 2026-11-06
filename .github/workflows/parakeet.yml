@@ -55,7 +55,7 @@ jobs:
             ls -la "runtime/out-$lang/${{ matrix.abi }}/assets/runtime" "runtime/out-$lang/${{ matrix.abi }}/jniLibs/${{ matrix.abi }}"
           done
       - name: Root-shell plugin unit tests
-        run: node --test runtime/plugins/parakeet-root-shell/test/
+        run: node --test runtime/plugins/parakeet-root-shell/test/*.test.mjs
       - name: Host smoke on Linux (en)
         if: matrix.abi == 'x86_64'
         run: bash runtime/tests/host-smoke.sh runtime/out-en 38123
