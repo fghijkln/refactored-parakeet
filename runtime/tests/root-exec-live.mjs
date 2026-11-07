@@ -15,6 +15,15 @@
 //                 rejects, so the tool result is an error and nothing ran
 //   brick-allowed Root on  → the same command, with approval answered allow, runs
 //   ordinary-no-ask Root on → an ordinary root command raises no approval at all
+//
+// On Android (runtime/tests/emulator-host-smoke.sh) the same file runs under the
+// APK's Termux node with these overrides:
+//   PARAKEET_LIVE_PRELOAD   the runtime tree's host-preload.mjs instead of the fixture
+//   PARAKEET_LIVE_SU_EXEC   the real root backend, e.g. `/system/xbin/su 0 /system/bin/sh -c "$2"`
+//   PARAKEET_LIVE_SH        the fake su's interpreter (/system/bin/sh)
+//   PARAKEET_LIVE_TMP       where the per-case trees go
+//   PARAKEET_LIVE_PASS_ENV  extra env names handed to dsh (LD_LIBRARY_PATH, OPENSSL_CONF, ...)
+//   PARAKEET_LIVE_CASES     comma-separated subset of case names
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
@@ -41,27 +50,29 @@ function fakeSu(dir) {
   const su = join(dir, 'su');
   const rc = join(dir, 'fake-root.rc');
   writeFileSync(rc, 'id() { if [ "$1" = -u ]; then echo 0; else echo "uid=0(root) gid=0(root)"; fi; }\n');
-  const sudo = spawnSync('sudo', ['-n', 'true']).status === 0;
+  const backend = process.env.PARAKEET_LIVE_SU_EXEC;
+  const sudo = !backend && spawnSync('sudo', ['-n', 'true']).status === 0;
   writeFileSync(su, [
-    '#!/bin/sh',
+    `#!${process.env.PARAKEET_LIVE_SH ?? '/bin/sh'}`,
     `printf '%s\\n' "$2" >> ${JSON.stringify(join(dir, 'su-calls.txt'))}`,
     '[ "$1" = -c ] || exit 9',
-    sudo ? 'exec sudo -n /bin/sh -c "$2"' : `BASH_ENV=${JSON.stringify(rc)} exec /bin/sh -c "$2"`,
+    backend ? `exec ${backend}` : sudo ? 'exec sudo -n /bin/sh -c "$2"' : `BASH_ENV=${JSON.stringify(rc)} exec /bin/sh -c "$2"`,
   ].join('\n') + '\n');
   chmodSync(su, 0o755);
-  return { su, real: sudo };
+  return { su, real: Boolean(backend) || sudo };
 }
 
 const CASES = [
   { name: 'granted-uid0', root: true, approve: false, command: 'id -u; echo PARAKEET_MARK', expectSu: true, expectRan: true, expectOutput: /^0$/m },
-  { name: 'off-no-su', root: false, approve: false, command: 'id -u; echo PARAKEET_MARK', expectSu: false, expectRan: true },
+  // Root off: the command runs as the engine's own uid (the app's uid on a phone).
+  { name: 'off-no-su', root: false, approve: false, command: 'id -u; echo PARAKEET_MARK', expectSu: false, expectRan: true, expectOutput: new RegExp(`^${process.getuid()}$`, 'm') },
   { name: 'brick-asks', root: true, approve: false, command: 'dd if=/dev/zero of="$TMPDIR/parakeet/dev/block/sda" bs=1 count=1; echo PARAKEET_MARK', expectSu: false, expectRan: false },
   { name: 'brick-allowed', root: true, approve: true, command: 'echo would-flash > "$TMPDIR/parakeet/dev/block/fake" 2>/dev/null; echo PARAKEET_MARK', expectSu: true, expectRan: true },
   { name: 'ordinary-no-ask', root: true, approve: false, command: 'echo ordinary; echo PARAKEET_MARK', expectSu: true, expectRan: true },
 ];
 
 async function runCase(c) {
-  const root = await mkdtemp(join(tmpdir(), 'parakeet-rootexec-'));
+  const root = await mkdtemp(join(process.env.PARAKEET_LIVE_TMP ?? tmpdir(), 'parakeet-rootexec-'));
   const home = join(root, 'home');
   const workspace = join(root, 'workspace');
   const suDir = join(root, 'su');
@@ -121,7 +132,8 @@ async function runCase(c) {
     if (c.approve) patch.push({ insert: [{ id: 'parakeet-approve-all', name: approvalPlugin }] });
     const patchFile = join(root, 'patch.json');
     writeFileSync(patchFile, JSON.stringify(patch));
-    const env = Object.fromEntries(['PATH', 'LANG', 'LC_ALL'].filter((k) => process.env[k]).map((k) => [k, process.env[k]]));
+    const passEnv = ['PATH', 'LANG', 'LC_ALL', ...(process.env.PARAKEET_LIVE_PASS_ENV ?? '').split(',').filter(Boolean)];
+    const env = Object.fromEntries(passEnv.filter((k) => process.env[k]).map((k) => [k, process.env[k]]));
     Object.assign(env, {
       HOME: home,
       DSH_HOME: home,
@@ -133,7 +145,7 @@ async function runCase(c) {
     });
     mkdirSync(join(root, 'tmp'), { recursive: true });
     const child = spawn(process.execPath, ['--expose-internals',
-      `--import=${join(here, 'fixtures', 'root-exec-preload.mjs')}`,
+      `--import=${process.env.PARAKEET_LIVE_PRELOAD ?? join(here, 'fixtures', 'root-exec-preload.mjs')}`,
       join(prefix, 'node_modules/@deepseek-ai/dsh/lib/bin.js'), 'headless', '--patch', patchFile, '--approval-policy', c.approve ? 'ask' : 'never',
       'Run the probe command with bash.',
     ], { cwd: workspace, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -177,8 +189,11 @@ async function runCase(c) {
   }
 }
 
+const only = (process.env.PARAKEET_LIVE_CASES ?? '').split(',').filter(Boolean);
+const selected = only.length ? CASES.filter((c) => only.includes(c.name)) : CASES;
+assert.ok(selected.length > 0, `no cases match PARAKEET_LIVE_CASES=${only}`);
 let failed = 0;
-for (const c of CASES) {
+for (const c of selected) {
   try {
     await runCase(c);
   } catch (error) {
@@ -186,5 +201,5 @@ for (const c of CASES) {
     console.error(JSON.stringify({ case: c.name, status: 'FAIL', error: String(error.stack ?? error).slice(0, 1500) }));
   }
 }
-console.log(JSON.stringify({ cases: CASES.length, passed: CASES.length - failed, failed }));
+console.log(JSON.stringify({ cases: selected.length, passed: selected.length - failed, failed }));
 assert.equal(failed, 0, 'parakeet root execution mode live cases');

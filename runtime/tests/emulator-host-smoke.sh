@@ -153,6 +153,38 @@ if [ -n "$TOKEN" ]; then
   echo "$probe" | tee "$LOGS/root-probe.txt"
   echo "$probe" | grep -q '"available":true' && echo "$probe" | grep -q '"uid":0' \
     && pass "root-shell su.js probe sees uid 0 through a fake su on Android" || fail "root probe through fake su: $probe"
+
+  # Root mode end to end on Android: root-exec-live.mjs (the runtime job's agent-turn
+  # test) under the APK's Termux node with the runtime's own host-preload.mjs, its mock
+  # model on 127.0.0.1 in the device, and PARAKEET_SU = a fake su whose backend is the
+  # emulator's real /system/xbin/su (uid 0 from the kernel). The shell uid stands in for
+  # the app here: the emulator's su only serves root and shell callers.
+  adb shell "mkdir -p $W/tests/fixtures $W/live"
+  adb push "$(dirname "$0")/root-exec-live.mjs" "$W/tests/" > /dev/null
+  adb push "$(dirname "$0")/fixtures/parakeet-approve-all.mjs" "$W/tests/fixtures/" > /dev/null
+  D=$R/opt/dsh-app/direct
+  cat > "$T/live.sh" <<EOF
+cd $W/tests || exit 1
+export PATH=$R/opt/dsh-app/direct/bin:/system/bin LD_LIBRARY_PATH=$W/links:$W/lib
+export OPENSSL_CONF=$D/tls/openssl.cnf OPENSSL_MODULES=$D/ossl-modules OPENSSL_ENGINES=$D/engines-3 SSL_CERT_FILE=$D/tls/cert.pem SSL_CERT_DIR=$D/tls/certs INPUTRC=$D/inputrc
+export DSH_GO_RUNTIME_ROOT=$R DSH_GO_DIRECT_ROOTFS=$R DSH_PREFIX=$R/opt/dsh TMPDIR=$W/live
+export PARAKEET_LIVE_PRELOAD=$R/opt/dsh-go/direct/host-preload.mjs PARAKEET_LIVE_SH=/system/bin/sh PARAKEET_LIVE_TMP=$W/live
+export PARAKEET_LIVE_SU_EXEC='/system/xbin/su 0 /system/bin/sh -c "\$2"'
+export PARAKEET_LIVE_PASS_ENV=LD_LIBRARY_PATH,OPENSSL_CONF,OPENSSL_MODULES,OPENSSL_ENGINES,SSL_CERT_FILE,SSL_CERT_DIR,INPUTRC,DSH_GO_RUNTIME_ROOT,DSH_GO_DIRECT_ROOTFS
+echo "runner uid \$(id -u); real su: \$(/system/xbin/su 0 /system/bin/sh -c 'id -u' 2>&1)"
+exec $W/lib/libnode_exec.so --expose-internals root-exec-live.mjs
+EOF
+  adb push "$T/live.sh" "$W/live.sh" > /dev/null
+  adb shell "sh $W/live.sh" > "$LOGS/root-exec-android.txt" 2>&1
+  tr -d '\r' < "$LOGS/root-exec-android.txt" | tail -40
+  rel() { grep "\"case\":\"$1\",\"status\":\"PASS\"" "$LOGS/root-exec-android.txt" | tr -d '\r'; }
+  r=$(rel granted-uid0); echo "$r" | grep -q '"result":"0\\nPARAKEET_MARK' \
+    && pass "Android agent turn, Root on: id -u = 0 through the real su" || fail "Android agent turn, Root on: no uid 0 ($r)"
+  r=$(rel off-no-su); [ -n "$r" ] && ! echo "$r" | grep -q '"result":"0\\n' \
+    && pass "Android agent turn, Root off: id -u is the engine's uid, su unused ($(echo "$r" | grep -o '"result":"[0-9]*'))" || fail "Android agent turn, Root off ($r)"
+  [ -n "$(rel brick-asks)" ] && pass "Android agent turn, Root on: /dev/block dd stopped at the approval, never ran" || fail "Android agent turn: brick-risk dd not stopped"
+  [ -n "$(rel brick-allowed)" ] && pass "Android agent turn, Root on: brick-risk command runs once approved" || fail "Android agent turn: approved brick-risk command"
+  [ -n "$(rel ordinary-no-ask)" ] && pass "Android agent turn, Root on: ordinary root command needs no approval" || fail "Android agent turn: ordinary root command"
 else
   fail "host engine did not start on Android"; tail -60 "$LOGS/host-engine.log"
 fi
