@@ -175,7 +175,13 @@ echo "runner uid \$(id -u); real su: \$(/system/xbin/su 0 /system/bin/sh -c 'id 
 exec $W/lib/libnode_exec.so --expose-internals root-exec-live.mjs
 EOF
   adb push "$T/live.sh" "$W/live.sh" > /dev/null
-  adb shell "sh $W/live.sh" > "$LOGS/root-exec-android.txt" 2>&1
+  # The session store commits with link(2); SELinux gives the shell domain no `link` on
+  # shell_data_file (/data/local/tmp), while the app's own domain has it in its data dir.
+  # Permissive only for these agent turns; the denials are kept in the log.
+  adb shell "/system/xbin/su 0 setenforce 0; getenforce" >> "$LOGS/root-exec-android.txt" 2>&1
+  adb shell "sh $W/live.sh" >> "$LOGS/root-exec-android.txt" 2>&1
+  adb shell "/system/xbin/su 0 setenforce 1; getenforce" >> "$LOGS/root-exec-android.txt" 2>&1
+  adb shell "/system/xbin/su 0 dmesg | grep 'avc:.*denied.*link' | tail -5" >> "$LOGS/root-exec-android.txt" 2>&1
   tr -d '\r' < "$LOGS/root-exec-android.txt" | tail -40
   rel() { grep "\"case\":\"$1\",\"status\":\"PASS\"" "$LOGS/root-exec-android.txt" | tr -d '\r'; }
   r=$(rel granted-uid0); echo "$r" | grep -q '"result":"0\\nPARAKEET_MARK' \
