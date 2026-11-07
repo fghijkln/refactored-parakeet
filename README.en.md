@@ -2,6 +2,10 @@
   <a href="README.md">简体中文</a> · <b>English</b>
 </p>
 
+> **This is Parakeet, a modified fork of [DSH Go](https://github.com/ccch1mneyyy/dsh-go) by [ccch1mneyyy](https://github.com/ccch1mneyyy) (AGPL-3.0), not the original project.**
+> Based on upstream ccch1mneyyy/dsh-Go@cf2f7c8 and modified since 2026-11-06: DeepSeek Harness runs on the host through Termux's node/bash (no Ubuntu/PRoot), KernelSU root tools, any vendor's model API, separate pure-Chinese and pure-English APKs, and feedback, DeepSeek account sign-in, telemetry, update checks and community entries removed. The list of changes is in [PARAKEET_NOTICE.md](PARAKEET_NOTICE.md).
+> Parakeet builds are on [this repository's Releases](https://github.com/fghijkln/refactored-parakeet/releases). The README below is upstream's: its download links, website, Issues and community belong to the original project, so please don't report Parakeet problems to the original author. The DSH Go name, logos and mascots are not covered by the open-source license (see [ASSETS.md](ASSETS.md)).
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-en-dark.webp">

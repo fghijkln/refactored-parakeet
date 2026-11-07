@@ -2,6 +2,10 @@
   <b>简体中文</b> · <a href="README.en.md">English</a>
 </p>
 
+> **这是 Parakeet，[DSH Go](https://github.com/ccch1mneyyy/dsh-go)（作者 [ccch1mneyyy](https://github.com/ccch1mneyyy)，AGPL-3.0）的修改版 fork，不是原项目。**
+> 基于上游 ccch1mneyyy/dsh-Go@cf2f7c8，自 2026-11-06 起修改：Termux 的 node/bash 直接在宿主上运行 DeepSeek Harness（不用 Ubuntu/PRoot）、KernelSU root 工具、多家模型 API、拆分纯中文/纯英文 APK，并移除了反馈、DeepSeek 账号登录、遥测、更新检查和社区入口。修改清单见 [PARAKEET_NOTICE.md](PARAKEET_NOTICE.md)。
+> Parakeet 的安装包在[本仓库的 Releases](https://github.com/fghijkln/refactored-parakeet/releases)；下文是上游 README，其中的下载链接、官网、Issues 和社区都属于原项目，请不要把 Parakeet 的问题报给原作者。DSH Go 的名称、标识和吉祥物不在开源授权内（见 [ASSETS.md](ASSETS.md)）。
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-zh-dark.webp">
