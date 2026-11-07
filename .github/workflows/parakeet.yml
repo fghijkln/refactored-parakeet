@@ -336,7 +336,7 @@ jobs:
         run: |
           ls -l dist
           cat > notes.md <<EOF
-          Parakeet v$APP_VERSION — deep customization of dsh-Go (AGPL-3.0, upstream ccch1mneyyy/dsh-Go@cf2f7c8).
+          Parakeet v$APP_VERSION — deep customization of [dsh-Go](https://github.com/ccch1mneyyy/dsh-go) by [ccch1mneyyy](https://github.com/ccch1mneyyy) (AGPL-3.0, upstream ccch1mneyyy/dsh-Go@cf2f7c8; changes listed in PARAKEET_NOTICE.md). Not an official DSH Go build.
 
           Changes in 0.2.1: the engine no longer dies at startup on phones that also have Termux installed (\`OpenSSL configuration error ... openssl.cnf: Permission denied\`). Termux's node/bash have Termux's /data/data/com.termux/files/usr paths compiled in; the app now gives OpenSSL its own config, modules/engines dirs and a CA bundle built from Android's system certificates, and its node/bash/sh wrappers default HOME, TMPDIR, LD_LIBRARY_PATH and these settings for child processes. The emulator smoke now plants an unreadable Termux tree and starts the app's own engine.
 
