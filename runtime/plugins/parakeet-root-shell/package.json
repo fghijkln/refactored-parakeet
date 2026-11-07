@@ -1,13 +1,14 @@
 {
   "name": "@parakeet/dsh-plugin-root-shell",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Android/KernelSU root shell tool for DeepSeek Harness: runs commands through `su` on the Android host, with an approval gate.",
+  "description": "Android/KernelSU root for DeepSeek Harness: root_shell/root_status tools through `su`, and the brick-risk confirmation gate for the agent's bash tool in root execution mode.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
     "./su": "./lib/su.js",
+    "./brick": "./lib/brick.js",
     "./package.json": "./package.json"
   },
   "license": "MIT",

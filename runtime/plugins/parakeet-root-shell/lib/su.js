@@ -13,6 +13,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { brickRisk } from './brick.js';
 
 /** Candidate absolute paths of an `su` binary, most standard first. */
 export const SU_CANDIDATES = [
@@ -212,7 +213,7 @@ export const DANGEROUS_PATTERNS = [
  * @returns {boolean} true when it looks destructive.
  */
 export function isDangerous(command) {
-  return DANGEROUS_PATTERNS.some((re) => re.test(command));
+  return DANGEROUS_PATTERNS.some((re) => re.test(command)) || brickRisk(command).risk;
 }
 
 /**

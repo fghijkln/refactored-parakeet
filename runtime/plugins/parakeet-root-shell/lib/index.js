@@ -1,5 +1,14 @@
 /**
- * DSH (Cordis) plugin: Android root shell over KernelSU `su`.
+ * DSH (Cordis) plugin: Android root over KernelSU `su`.
+ *
+ * Root execution mode (设置 › 系统权限 › Root, v0.2.2): once the user grants root,
+ * the app writes `rootExec: true` into the settings file below, and the host
+ * runtime (runtime/direct/root-exec.mjs) runs every `bash` command of the agent
+ * as uid 0. No per-command prompt — except for brick-risk commands
+ * (lib/brick.js: partition writes, system partitions mounted rw or written,
+ * /data or /metadata wiped or formatted, flashing, partition tables), which this
+ * plugin confirms ONCE with the user through DSH's approval service before they
+ * run (a `tools/pre-execute` gate on `bash`, and inside `root_shell`).
  *
  * Registers two model-facing tools on the host tool registry:
  *  - `root_shell`: run a shell command as uid 0 through a persistent `su`
@@ -22,9 +31,13 @@ import { join } from 'node:path';
 import z from '@deepseek-ai/schemastery';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { PersistentSu, findSu, isDangerous, probeRoot, runAsRoot } from './su.js';
+import { brickRisk } from './brick.js';
 
 export const name = 'parakeet-root-shell';
 export const inject = ['tools'];
+
+/** Tools whose `command` argument is a shell command run by the host runtime. */
+export const SHELL_TOOLS = new Set(['bash']);
 
 export const Config = z.object({
   /** Default for the confirmation gate when the settings file is absent. */
@@ -54,15 +67,37 @@ export function readAppSettings(path) {
 /**
  * Decide whether a root command needs the user's approval.
  * @param {string} command
- * @param {boolean} requireConfirm - the user's toggle.
+ * @param {boolean} requireConfirm - per-command confirmation (off once Root is granted).
  * @returns {{ask: boolean, reason?: string}}
  */
 export function approvalNeed(command, requireConfirm) {
   if (isDangerous(command)) {
-    return { ask: true, reason: 'potentially device-destroying root command (always confirmed)' };
+    const why = brickRisk(command).reason ?? 'potentially device-destroying';
+    return { ask: true, reason: `brick-risk root command: ${why} (always confirmed)` };
   }
   if (requireConfirm) return { ask: true, reason: 'root command (confirmation enabled in app settings)' };
   return { ask: false };
+}
+
+/**
+ * The brick-risk gate for the agent's `bash` tool while root execution mode is
+ * on: a `tools/pre-execute` decision. Ordinary commands pass untouched; a
+ * brick-risk one becomes ONE approval ask (merged with any ask a downstream
+ * policy already raised).
+ * @param {{name: string, arguments?: {command?: unknown}}} exec - the pending call.
+ * @param {boolean} rootExec - the app's Root grant.
+ * @returns {{kind: 'ask', reason: string, displayReason: string} | undefined} the ask, or undefined to pass.
+ */
+export function brickGate(exec, rootExec) {
+  if (!rootExec || !SHELL_TOOLS.has(exec?.name)) return undefined;
+  const command = typeof exec.arguments?.command === 'string' ? exec.arguments.command : '';
+  const risk = brickRisk(command);
+  if (!risk.risk) return undefined;
+  return {
+    kind: 'ask',
+    reason: `brick-risk root command: ${risk.reason}: ${command}`,
+    displayReason: `ROOT · ${risk.reason}\n\n# ${command}`,
+  };
 }
 
 function settingsPath() {
@@ -86,6 +121,16 @@ export async function apply(ctx, config) {
     const v = typeof config?.[key]?.get === 'function' ? config[key].get() : config?.[key];
     return v ?? fallback;
   };
+
+  // Brick-risk gate on the agent's bash tool (root execution mode, v0.2.2).
+  ctx.on?.('tools/pre-execute', async (exec, next) => {
+    const gate = brickGate(exec, readAppSettings(settingsPath()).rootExec === true);
+    const downstream = await next();
+    if (gate === undefined) return downstream;
+    // A downstream deny/cancel stands; an allow or another ask becomes this one ask.
+    if (downstream?.kind === 'deny' || downstream?.kind === 'cancel') return downstream;
+    return gate;
+  });
 
   ctx.tools.register(
     defineTool({
@@ -160,7 +205,10 @@ export async function apply(ctx, config) {
           throw new Error('root unavailable: no su binary on this device. Install KernelSU and grant root to this app in the KernelSU manager, or use the bash tool.');
         }
         const appSettings = readAppSettings(settingsPath());
-        const requireConfirm = appSettings.requireRootConfirm ?? effective('requireConfirm', true);
+        // Root granted in the app (rootExec): root is the agent's normal mode, so only
+        // brick-risk commands ask. Otherwise the older per-command toggle applies.
+        const requireConfirm = appSettings.rootExec === true ? false
+          : (appSettings.requireRootConfirm ?? effective('requireConfirm', true));
         const need = approvalNeed(command, requireConfirm);
         if (need.ask) {
           const approver = ctx.get?.('approval');
@@ -202,5 +250,5 @@ export async function apply(ctx, config) {
     }),
   );
   // One line in the engine log (the app's Logs screen): the root tools are registered.
-  process.stderr.write('[parakeet-root-shell] registered root_shell, root_status\n');
+  process.stderr.write('[parakeet-root-shell] registered root_shell, root_status, bash brick-risk gate\n');
 }

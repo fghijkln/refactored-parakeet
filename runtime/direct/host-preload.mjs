@@ -12,6 +12,7 @@ import { registerHooks } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createPaths } from './paths.mjs';
 import { installCommands } from './processes.mjs';
+import { createRootExec } from './root-exec.mjs';
 
 const self = fileURLToPath(import.meta.url);
 const rootfs = self.replace(/\/opt\/dsh-go\/direct\/host-preload\.mjs$/u, '');
@@ -22,7 +23,11 @@ try {
     throw new Error('host launch configuration does not match this runtime');
   }
   const paths = createPaths(rootfs, config.mounts);
-  const processes = installCommands(config, paths);
+  // Parakeet: with Root granted, the agent's shell commands run as uid 0 (root-exec.mjs).
+  // Already root (a command that itself started node): nothing to wrap.
+  const rootExec = process.getuid?.() === 0 ? undefined
+    : createRootExec({ rootfs, log: (line) => process.stderr.write(`${line}\n`) });
+  const processes = installCommands(config, paths, rootExec === undefined ? {} : { plan: rootExec });
   globalThis[Symbol.for('dsh.go.direct')] = Object.freeze({ ...paths, ...processes });
   // Guest-spelled absolute module paths (plugin rows such as
   // /opt/dsh-go/dsh-go-bridge/lib/index.js) resolve inside the runtime tree.

@@ -82,13 +82,16 @@ export function createCommands(config, paths) {
  * Native spawn/execFile retain validation, AbortSignal, timeout, detached PGID,
  * stdio, IPC descriptors, and result/ChildProcess ownership.
  */
-export function installCommands(config, paths) {
+export function installCommands(config, paths, hooks = {}) {
   const adapter = createCommands(config, paths);
+  // Parakeet: an optional last step over every planned child (root-exec.mjs routes the
+  // agent's own shell commands through su when Root is granted).
+  const finish = typeof hooks.plan === 'function' ? hooks.plan : (plan) => plan;
   const original = Object.fromEntries(['spawn', 'spawnSync', 'execFile', 'execFileSync', 'exec', 'execSync', 'fork']
     .map((key) => [key, cp[key]]));
   function argumentsFor(file, args, options) {
-    if (!Array.isArray(args) && args != null && typeof args === 'object') return adapter.command(file, [], args);
-    return adapter.command(file, args ?? [], options === undefined ? {} : options);
+    if (!Array.isArray(args) && args != null && typeof args === 'object') return finish(adapter.command(file, [], args));
+    return finish(adapter.command(file, args ?? [], options === undefined ? {} : options));
   }
   for (const name of ['spawn', 'spawnSync', 'execFileSync']) {
     cp[name] = function (file, args, options) {
