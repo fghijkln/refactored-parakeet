@@ -181,6 +181,35 @@ class PhoneA11yStatus {
   bool get ok => enabled && serviceConnected;
 }
 
+/// Whether DSH really mounted the `phone` MCP server (native `mcpStatus`): the
+/// toggle, accessibility and a listening bridge can all be fine while the engine's
+/// MCP child never connects (v0.2.2 on the host engine: its bridge.json path did
+/// not exist on Android).
+enum PhoneMcpState { unknown, off, waiting, connected, notConnected, disconnected, failed }
+
+class PhoneMcpStatus {
+  const PhoneMcpStatus({this.state = PhoneMcpState.unknown, this.error, this.toolsListed = 0});
+
+  factory PhoneMcpStatus.fromMap(Map<Object?, Object?> m) => PhoneMcpStatus(
+    state: PhoneMcpState.values.firstWhere((v) => v.name == m['state'], orElse: () => PhoneMcpState.unknown),
+    error: m['error'] is String ? m['error'] as String : null,
+    toolsListed: m['toolsListed'] is int ? m['toolsListed'] as int : 0,
+  );
+
+  /// `unknown`: an older native module that does not report it.
+  final PhoneMcpState state;
+
+  /// The relay's own reason, when it reported one.
+  final String? error;
+  final int toolsListed;
+
+  bool get connected => state == PhoneMcpState.connected;
+
+  /// Running and definitely not serving tools.
+  bool get broken =>
+      state == PhoneMcpState.failed || state == PhoneMcpState.notConnected || state == PhoneMcpState.disconnected;
+}
+
 class ShizukuStatus {
   const ShizukuStatus({
     this.installed = false,
@@ -381,6 +410,7 @@ class PhoneStatus {
     this.error,
     this.enabled = false,
     this.bridgeListening = false,
+    this.mcp = const PhoneMcpStatus(),
     this.a11y = const PhoneA11yStatus(),
     this.a11yKeeper = const A11yKeeperStatus(),
     this.overlay = false,
@@ -396,6 +426,7 @@ class PhoneStatus {
     : ready = false,
       enabled = false,
       bridgeListening = false,
+      mcp = const PhoneMcpStatus(),
       a11y = const PhoneA11yStatus(),
       a11yKeeper = const A11yKeeperStatus(),
       overlay = false,
@@ -408,6 +439,7 @@ class PhoneStatus {
   factory PhoneStatus.fromMap(Map<Object?, Object?> m) => PhoneStatus(
     enabled: _flag(m['enabled']),
     bridgeListening: _flag(m['bridgeListening']),
+    mcp: m['mcp'] is Map ? PhoneMcpStatus.fromMap(_map(m['mcp'])) : const PhoneMcpStatus(),
     a11y: PhoneA11yStatus.fromMap(_map(m['a11y'])),
     a11yKeeper: A11yKeeperStatus.fromMap(_map(m['a11yKeeper'])),
     overlay: _flag(m['overlay']),
@@ -427,6 +459,9 @@ class PhoneStatus {
   /// The master switch 「手机操控」.
   final bool enabled;
   final bool bridgeListening;
+
+  /// The engine's `phone` MCP server, as the bridge saw it.
+  final PhoneMcpStatus mcp;
   final PhoneA11yStatus a11y;
   final A11yKeeperStatus a11yKeeper;
   final bool overlay;
@@ -446,6 +481,7 @@ class PhoneStatus {
     error: error,
     enabled: enabled ?? this.enabled,
     bridgeListening: bridgeListening,
+    mcp: mcp,
     a11y: a11y,
     a11yKeeper: a11yKeeper,
     overlay: overlay,

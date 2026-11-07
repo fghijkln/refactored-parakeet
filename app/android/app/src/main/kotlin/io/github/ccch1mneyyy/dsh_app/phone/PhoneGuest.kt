@@ -1,5 +1,6 @@
 package io.github.ccch1mneyyy.dsh_app.phone
 
+import io.github.ccch1mneyyy.dsh_app.runtime.GuestPaths
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -51,8 +52,16 @@ object PhoneGuest {
         return arg.substring(0, at) + " --patch $PATCH" + arg.substring(at)
     }
 
+    /**
+     * The overlay. [relay] and [config] are the paths the MCP child is handed: guest spellings for
+     * the PRoot/direct engines (the rootfs is `/` there), host spellings (`<rootfs>/opt/...`,
+     * `<rootfs>/var/...`) for the Parakeet host engine, which runs on Android's own `/` where
+     * `/var` and `/opt` do not exist (v0.2.2: the relay got ENOENT and `phone` stayed
+     * disconnected). runtime/direct/host-args.mjs maps guest spellings for every host-mode child
+     * as well, and the relay falls back to its own tree, so each layer alone is enough.
+     */
     // l10n:keep agent config comment
-    val PATCH_YAML = """# dsh-app: phone control (手机操控). The DSH App rewrites this file at every engine start and
+    fun patchYaml(relay: String = RELAY, config: String = CONFIG): String = """# dsh-app: phone control (手机操控). The DSH App rewrites this file at every engine start and
 # passes it with --patch only while phone control is on (never in safe mode). Edits do not survive.
 - insert:
     - id: dsh-app-phone
@@ -62,11 +71,15 @@ object PhoneGuest {
         transport: stdio
         command: !!js process.execPath
         args:
-          - $RELAY
-          - $CONFIG
+          - ${GuestPaths.yamlQuote(relay)}
+          - ${GuestPaths.yamlQuote(config)}
         toolCallTimeoutMs: $TOOL_CALL_TIMEOUT_MS
         failOnStartupError: false
 """
+
+    /** The guest-spelled overlay (PRoot / direct engines). */
+    val PATCH_YAML: String get() = patchYaml()
+
 
     /** Appended to the managed `$DSH_HOME/AGENTS.md` while phone control is on. */
     // l10n:keep agent config comment
@@ -88,11 +101,38 @@ object PhoneGuest {
         ),
     ) + "\n"
 
-    /** Writes the relay and the overlay (world-readable, no secrets). */
-    fun writeFiles(rootfs: File) {
+    /**
+     * Writes the relay and the overlay (world-readable, no secrets); [host]: the Parakeet host
+     * engine, whose children need host spellings. Also clears the previous launch's relay status.
+     */
+    fun writeFiles(rootfs: File, host: Boolean = false) {
         val dir = realDir(guestFile(rootfs, GUEST_DIR), ownerOnly = false)
         writeAtomic(File(dir, "relay.cjs"), RELAY_JS, ownerOnly = false)
-        writeAtomic(File(dir, "phone.patch.yml"), PATCH_YAML, ownerOnly = false)
+        writeAtomic(File(dir, "phone.patch.yml"),
+            patchYaml(GuestPaths.childPath(rootfs, RELAY, host), GuestPaths.childPath(rootfs, CONFIG, host)), ownerOnly = false)
+        clearRelayStatus(rootfs)
+    }
+
+    /** What the relay last reported (`relay-status.json` next to it), or null. */
+    data class RelayStatus(val ok: Boolean, val error: String?, val config: String?)
+
+    const val RELAY_STATUS = "$GUEST_DIR/relay-status.json"
+
+    fun relayStatus(rootfs: File): RelayStatus? = try {
+        val f = guestFile(rootfs, RELAY_STATUS)
+        if (!f.isFile || f.length() > 8192) null else {
+            val m = Json.parse(f.readText()) as? Map<*, *>
+            m?.let { RelayStatus(it["ok"] == true, (it["error"] as? String)?.take(400), (it["config"] as? String)?.take(400)) }
+        }
+    } catch (_: Exception) {
+        null
+    }
+
+    fun clearRelayStatus(rootfs: File) {
+        try {
+            guestFile(rootfs, RELAY_STATUS).delete()
+        } catch (_: Exception) {
+        }
     }
 
     /** Writes this launch's socket name and token, owner-only. */
@@ -153,14 +193,42 @@ object PhoneGuest {
 const fs = require('fs')
 const net = require('net')
 
-const CONFIG = process.argv[2] || '/var/lib/dsh-app/phone/bridge.json'
-function say (line) { try { process.stderr.write('[phone-relay] ' + line + '\n') } catch (e) {} }
+const path = require('path')
 
+const GUEST_CONFIG = '/var/lib/dsh-app/phone/bridge.json'
+const ASKED = process.argv[2] || GUEST_CONFIG
+// This file's own tree: <rootfs>/opt/dsh-app/phone/relay.cjs ('' under PRoot, where the rootfs is /).
+const HERE = path.dirname(__filename)
+const ROOT = HERE.endsWith('/opt/dsh-app/phone') ? HERE.slice(0, -'/opt/dsh-app/phone'.length) : null
+const STATUS = path.join(HERE, 'relay-status.json')
+function say (line) { try { process.stderr.write('[phone-relay] ' + line + '\n') } catch (e) {} }
+function report (ok, error, config) {
+  try {
+    const tmp = STATUS + '.' + process.pid + '.tmp'
+    fs.writeFileSync(tmp, JSON.stringify({ v: 1, ok: ok, error: error || null, config: config || null, pid: process.pid, at: Date.now() }) + '\n')
+    fs.renameSync(tmp, STATUS)
+  } catch (e) {}
+}
+
+// The path asked for, then the same guest path inside this relay's own tree (the host engine runs
+// on Android's real /, where /var does not exist; v0.2.2 failed here with ENOENT).
+const candidates = [ASKED]
+if (ROOT && ASKED.startsWith('/') && !ASKED.startsWith(ROOT + '/')) candidates.push(ROOT + ASKED)
 let cfg
-try {
-  cfg = JSON.parse(fs.readFileSync(CONFIG, 'utf8'))
-} catch (e) {
-  say('phone control is not available (' + CONFIG + ': ' + (e.code || e.message) + ')')
+let CONFIG = ASKED
+let firstError = null
+for (const c of candidates) {
+  try {
+    cfg = JSON.parse(fs.readFileSync(c, 'utf8'))
+    CONFIG = c
+    break
+  } catch (e) {
+    if (!firstError) firstError = c + ': ' + (e.code || e.message)
+  }
+}
+if (!cfg) {
+  say('phone control is not available (' + firstError + ')')
+  report(false, 'config ' + firstError, ASKED)
   process.exit(1)
 }
 const targets = []
@@ -170,7 +238,7 @@ if (Number.isInteger(cfg.tcpPort) && cfg.tcpPort > 0) targets.push({ host: '127.
 process.stdout.on('error', function (e) { process.exit(e.code === 'EPIPE' ? 0 : 1) })
 
 function attempt (i) {
-  if (i >= targets.length) { say('phone bridge unreachable'); process.exit(1) }
+  if (i >= targets.length) { say('phone bridge unreachable'); report(false, 'bridge unreachable (' + targets.map(function (t) { return t.what }).join(', ') + ')', CONFIG); process.exit(1) }
   const t = targets[i]
   const sock = net.connect(t.port ? { host: t.host, port: t.port } : { path: t.path })
   let up = false
@@ -180,6 +248,7 @@ function attempt (i) {
     clearTimeout(timer)
     if (sock.setNoDelay) sock.setNoDelay(true)
     sock.write(JSON.stringify({ dshPhone: 1, token: String(cfg.token || '') }) + '\n')
+    report(true, null, CONFIG)
     process.stdin.pipe(sock)
     sock.pipe(process.stdout)
   })

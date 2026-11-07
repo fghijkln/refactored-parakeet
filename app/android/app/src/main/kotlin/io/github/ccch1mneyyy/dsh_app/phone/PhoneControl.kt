@@ -130,6 +130,9 @@ class PhoneControl private constructor(private val app: Context) : PhoneEnv, Con
 
     @Volatile private var logger: (String) -> Unit = {}
     @Volatile private var rootfs: File? = null
+
+    /** The 5 s check after the engine's ready line ran ([checkReached]): "waiting" is over. */
+    @Volatile private var readyChecked = false
     @Volatile private var policiesCache: PhonePolicies? = null
     @Volatile private var statusLine: String? = null
     @Volatile private var lastStatus: Map<String, Any?>? = null
@@ -212,10 +215,11 @@ class PhoneControl private constructor(private val app: Context) : PhoneEnv, Con
      * the bridge and returns true (the launch then adds the `--patch` overlay). Otherwise makes
      * sure nothing is listening and returns false: DSH mounts no phone tools at all.
      */
-    fun prepareLaunch(rootfs: File, safe: Boolean, log: (String) -> Unit): Boolean {
+    fun prepareLaunch(rootfs: File, safe: Boolean, host: Boolean = false, log: (String) -> Unit): Boolean {
         logger = log
         tasks.invalidateOwners()
         stopBridge()
+        readyChecked = false
         this.rootfs = rootfs
         if (!isEnabled() || safe) {
             PhoneGuest.clearConfig(rootfs)
@@ -224,7 +228,11 @@ class PhoneControl private constructor(private val app: Context) : PhoneEnv, Con
             return false
         }
         return try {
-            PhoneGuest.writeFiles(rootfs)
+            PhoneGuest.writeFiles(rootfs, host)
+            bridge.onToolsListed = {
+                logger("[dsh-app] phone control: MCP server connected (DSH listed the phone tools)")
+                emitStatus()
+            }
             val ep = bridge.start(withTcp = prefs.getBoolean(K_TCP_FALLBACK, false))
             PhoneGuest.writeConfig(rootfs, ep)
             registerScreenOff()
@@ -257,7 +265,16 @@ class PhoneControl private constructor(private val app: Context) : PhoneEnv, Con
     }
 
     private fun checkReached() {
-        if (!bridge.listening || bridge.authenticatedConnections > 0) return
+        readyChecked = true
+        if (!bridge.listening) return
+        if (bridge.authenticatedConnections > 0) {
+            if (bridge.toolsListed == 0) logger("[dsh-app] phone control: the relay reached the bridge but DSH has not listed the phone tools yet")
+            emitStatus()
+            return
+        }
+        PhoneGuest.relayStatus(rootfs ?: return)?.takeIf { !it.ok }?.let {
+            logger("[dsh-app] phone control: MCP server not connected: ${it.error}")
+        }
         val ep = bridge.endpoint ?: return
         if (ep.tcpPort != null) {
             logger("[dsh-app] phone control: DSH did not connect to the phone bridge (unix socket nor loopback)")
@@ -439,6 +456,7 @@ class PhoneControl private constructor(private val app: Context) : PhoneEnv, Con
     fun status(): Map<String, Any?> = linkedMapOf(
         "enabled" to isEnabled(),
         "bridgeListening" to bridge.listening,
+        "mcp" to mcpStatus(),
         "a11y" to linkedMapOf("enabled" to a11yEnabledInSettings(), "serviceConnected" to (PhoneRegistry.mainDriver != null)),
         "overlay" to (PhoneRegistry.overlayGate != null),
         "notifications" to nm.areNotificationsEnabled(),
@@ -453,6 +471,32 @@ class PhoneControl private constructor(private val app: Context) : PhoneEnv, Con
             "restricted" to RestrictedSettings.read(app),
         ),
     )
+
+    /**
+     * Whether DSH really mounted the `phone` MCP server, not just whether the bridge listens:
+     * `connected` (DSH listed the tools over a live relay), `failed` (the relay reported why, e.g.
+     * its bridge.json path ENOENT), `notConnected` (nothing reached the bridge 5 s after the
+     * engine was ready), `disconnected` (it was connected and the relay went away), `waiting`
+     * (engine still starting), `off` (switch off, safe mode, engine stopped).
+     */
+    fun mcpStatus(): Map<String, Any?> {
+        val relay = rootfs?.let { PhoneGuest.relayStatus(it) }
+        val state = when {
+            !isEnabled() || !bridge.listening -> "off"
+            bridge.liveConnections > 0 && bridge.toolsListed > 0 -> "connected"
+            relay != null && !relay.ok -> "failed"
+            bridge.toolsListed > 0 -> "disconnected"
+            readyChecked -> "notConnected"
+            else -> "waiting"
+        }
+        return linkedMapOf(
+            "state" to state,
+            "toolsListed" to bridge.toolsListed,
+            "connections" to bridge.liveConnections,
+            "error" to relay?.takeIf { !it.ok }?.error,
+            "config" to relay?.config,
+        )
+    }
 
     private fun backgroundStatus(): Map<String, Any?> = try {
         background.status()

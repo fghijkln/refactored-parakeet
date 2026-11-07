@@ -136,7 +136,7 @@ object HostLaunch {
             val mount = mounts.firstOrNull { path == it.guest || path.startsWith("${it.guest}/") }
             return if (mount == null) rootPath + path else mount.host + path.removePrefix(mount.guest)
         }
-        for (key in listOf("HOME", "DSH_HOME", "DSH_AGENTS_HOME", "TMPDIR", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE")) {
+        for (key in listOf("HOME", "DSH_HOME", "DSH_AGENTS_HOME", "DSH_APP_ORIGINAL_HOME", "TMPDIR", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE")) {
             env[key]?.let { env[key] = hostPath(it) }
         }
         env["HOME"] = env["HOME"] ?: "$rootPath/root"

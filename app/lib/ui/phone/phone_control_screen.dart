@@ -381,6 +381,9 @@ class _PhoneControlScreenState extends ConsumerState<PhoneControlScreen> {
     if (runtime.runtimeMissing) return context.l10n.localEnvPhoneNeedsRuntime;
     if (runtime.phase != RuntimePhase.running) return context.l10n.phoneControlAfterEngineStarts;
     if (!s.a11y.enabled) return context.l10n.phoneControlNeedsAccessibility;
+    // Toggle, accessibility and bridge can all be fine while DSH never mounted the MCP server.
+    if (s.mcp.broken) return context.l10n.phoneControlToolsNotConnected;
+    if (s.mcp.state == PhoneMcpState.waiting) return context.l10n.phoneControlToolsConnecting;
     return context.l10n.phoneControlReady;
   }
 

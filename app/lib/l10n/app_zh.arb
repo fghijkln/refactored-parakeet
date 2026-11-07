@@ -5568,6 +5568,8 @@
   "phoneControlAfterEngineStarts": "引擎启动后生效",
   "phoneControlNeedsAccessibility": "还差一步：打开无障碍",
   "phoneControlReady": "可以操作手机",
+  "phoneControlToolsConnecting": "正在把手机工具接入引擎…",
+  "phoneControlToolsNotConnected": "手机工具没接入引擎，重启引擎试试；仍不行请导出诊断",
   "phoneControlSetup": "准备",
   "phoneControlAccessibilityService": "无障碍服务",
   "phoneControlAccessibilityReady": "能看屏幕、帮你点按了",

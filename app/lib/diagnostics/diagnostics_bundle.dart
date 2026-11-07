@@ -108,6 +108,11 @@ abstract final class DiagnosticsBundle {
         if (s.phone.ready) ...{
           'enabled': s.phone.enabled,
           'bridgeListening': s.phone.bridgeListening,
+          if (s.phone.mcp.state != PhoneMcpState.unknown) 'mcp': {
+            'state': s.phone.mcp.state.name,
+            'toolsListed': s.phone.mcp.toolsListed,
+            if (s.phone.mcp.error != null) 'error': s.phone.mcp.error,
+          },
           'a11y': {'enabled': s.phone.a11y.enabled, 'serviceConnected': s.phone.a11y.serviceConnected},
         },
       },

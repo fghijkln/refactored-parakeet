@@ -85,7 +85,8 @@ export function createCommands(config, paths) {
 export function installCommands(config, paths, hooks = {}) {
   const adapter = createCommands(config, paths);
   // Parakeet: an optional last step over every planned child (root-exec.mjs routes the
-  // agent's own shell commands through su when Root is granted).
+  // agent's own shell commands through su when Root is granted). `hooks.args` maps
+  // fork() arguments, which have no plan (host-args.mjs).
   const finish = typeof hooks.plan === 'function' ? hooks.plan : (plan) => plan;
   const original = Object.fromEntries(['spawn', 'spawnSync', 'execFile', 'execFileSync', 'exec', 'execSync', 'fork']
     .map((key) => [key, cp[key]]));
@@ -141,7 +142,8 @@ export function installCommands(config, paths, hooks = {}) {
       const plan = adapter.command(out.execPath);
       out.execPath = plan.args.length ? adapter.shellWrapper(out.execPath) : plan.file;
     }
-    return original.fork(paths.toHost(modulePath instanceof URL ? fileURLToPath(modulePath) : modulePath), args ?? [], adapter.nodeOptions(out));
+    const forkArgs = typeof hooks.args === 'function' ? hooks.args(args ?? []) : (args ?? []);
+    return original.fork(paths.toHost(modulePath instanceof URL ? fileURLToPath(modulePath) : modulePath), forkArgs, adapter.nodeOptions(out));
   };
   for (const name of ['exec', 'execFile']) {
     cp[name][promisify.custom] = (...args) => {

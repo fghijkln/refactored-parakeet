@@ -13,6 +13,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createPaths } from './paths.mjs';
 import { installCommands } from './processes.mjs';
 import { createRootExec } from './root-exec.mjs';
+import { createHostArgs } from './host-args.mjs';
 
 const self = fileURLToPath(import.meta.url);
 const rootfs = self.replace(/\/opt\/dsh-go\/direct\/host-preload\.mjs$/u, '');
@@ -27,8 +28,12 @@ try {
   // Already root (a command that itself started node): nothing to wrap.
   const rootExec = process.getuid?.() === 0 ? undefined
     : createRootExec({ rootfs, log: (line) => process.stderr.write(`${line}\n`) });
-  const processes = installCommands(config, paths, rootExec === undefined ? {} : { plan: rootExec });
-  globalThis[Symbol.for('dsh.go.direct')] = Object.freeze({ ...paths, ...processes });
+  // Guest paths in child argv/env (MCP server rows, plugin configs) → runtime tree,
+  // before the su wrap so a root command carries the mapped spelling (host-args.mjs).
+  const hostArgs = createHostArgs({ rootfs, mounts: config.mounts });
+  const plan = rootExec === undefined ? hostArgs.plan : (p) => rootExec(hostArgs.plan(p));
+  const processes = installCommands(config, paths, { plan, args: hostArgs.mapArgs });
+  globalThis[Symbol.for('dsh.go.direct')] = Object.freeze({ ...paths, ...processes, hostArgs });
   // Guest-spelled absolute module paths (plugin rows such as
   // /opt/dsh-go/dsh-go-bridge/lib/index.js) resolve inside the runtime tree.
   registerHooks({

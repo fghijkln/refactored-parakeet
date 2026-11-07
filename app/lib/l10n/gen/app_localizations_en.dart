@@ -9570,6 +9570,13 @@ class L10nEn extends L10n {
   String get phoneControlReady => 'Ready to control your phone';
 
   @override
+  String get phoneControlToolsConnecting => 'Connecting the phone tools to the engine…';
+
+  @override
+  String get phoneControlToolsNotConnected =>
+      'The phone tools did not reach the engine. Restart the engine; if it persists, export diagnostics';
+
+  @override
   String get phoneControlSetup => 'Setup';
 
   @override

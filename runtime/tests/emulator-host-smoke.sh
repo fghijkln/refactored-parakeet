@@ -180,6 +180,16 @@ EOF
   # Permissive only for these agent turns; the denials are kept in the log.
   adb shell "/system/xbin/su 0 setenforce 0; getenforce" >> "$LOGS/root-exec-android.txt" 2>&1
   adb shell "sh $W/live.sh" >> "$LOGS/root-exec-android.txt" 2>&1
+  # Phone MCP under the host engine (v0.2.3): a real agent turn whose `phone` MCP row names
+  # guest paths (/opt/..., /var/... as v0.2.2 wrote them) and host paths (as the app writes
+  # them now); the relay the APK writes must reach a fake bridge, DSH must list and call
+  # mcp__phone__screen. The runtime tree is the real one extracted above.
+  adb push "$(dirname "$0")/phone-mcp-host-live.mjs" "$W/tests/" > /dev/null
+  adb push "$(dirname "$0")/../../app/android/app/src/main/kotlin/io/github/ccch1mneyyy/dsh_app/phone/PhoneGuest.kt" "$W/tests/PhoneGuest.kt" > /dev/null
+  sed -e 's#root-exec-live.mjs#phone-mcp-host-live.mjs#' -e "s#^export PARAKEET_LIVE_PRELOAD=.*#export PARAKEET_LIVE_ROOTFS=$R PARAKEET_LIVE_PHONE_GUEST=$W/tests/PhoneGuest.kt PARAKEET_LIVE_TMP=$W/live#" \
+    "$T/live.sh" > "$T/phone-live.sh"
+  adb push "$T/phone-live.sh" "$W/phone-live.sh" > /dev/null
+  adb shell "sh $W/phone-live.sh" > "$LOGS/phone-mcp-android.txt" 2>&1
   adb shell "/system/xbin/su 0 setenforce 1; getenforce" >> "$LOGS/root-exec-android.txt" 2>&1
   adb shell "/system/xbin/su 0 dmesg | grep 'avc:.*denied.*link' | tail -5" >> "$LOGS/root-exec-android.txt" 2>&1
   tr -d '\r' < "$LOGS/root-exec-android.txt" | tail -40
@@ -191,6 +201,15 @@ EOF
   [ -n "$(rel brick-asks)" ] && pass "Android agent turn, Root on: /dev/block dd stopped at the approval, never ran" || fail "Android agent turn: brick-risk dd not stopped"
   [ -n "$(rel brick-allowed)" ] && pass "Android agent turn, Root on: brick-risk command runs once approved" || fail "Android agent turn: approved brick-risk command"
   [ -n "$(rel ordinary-no-ask)" ] && pass "Android agent turn, Root on: ordinary root command needs no approval" || fail "Android agent turn: ordinary root command"
+  tr -d '\r' < "$LOGS/phone-mcp-android.txt" | tail -20
+  prel() { grep "\"case\":\"$1\",\"status\":\"PASS\"" "$LOGS/phone-mcp-android.txt" | tr -d '\r'; }
+  r=$(prel guest-paths); [ -n "$r" ] \
+    && pass "Android host engine: phone MCP row with GUEST paths connects (tools/list + tools/call through the relay; $(echo "$r" | grep -o '"config":"[^"]*"'))" \
+    || fail "Android host engine: phone MCP with guest paths not connected ($(grep -o '"case":"guest-paths","status":"FAIL".\{0,400\}' "$LOGS/phone-mcp-android.txt" | head -1))"
+  [ -n "$(prel host-paths)" ] && pass "Android host engine: phone MCP row with host paths (as the app writes it) connects" \
+    || fail "Android host engine: phone MCP with host paths not connected"
+  [ -n "$(prel relay-alone)" ] && pass "Android: the relay alone (no preload) resolves the guest bridge.json in its own tree" \
+    || fail "Android: relay fallback"
 else
   fail "host engine did not start on Android"; tail -60 "$LOGS/host-engine.log"
 fi
@@ -214,6 +233,13 @@ fi
 # ---- 3. the app's own engine ---------------------------------------------
 FILES=/data/user/0/$PKG/files
 APPLOG=$FILES/runtime/logs/dsh.log
+# Phone control switched on (its SharedPreferences, written while the app is stopped), so the
+# app's own launch mounts the `phone` MCP server; accessibility is not needed for that.
+adb shell am force-stop "$PKG"
+APP_UID0=$(adb shell dumpsys package "$PKG" | tr -d '\r' | sed -n 's/.*userId=\([0-9]*\).*/\1/p' | head -1)
+adb shell "mkdir -p /data/user/0/$PKG/shared_prefs && printf '%s\n' \"<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\" '<map>' '    <boolean name=\"enabled\" value=\"true\" />' '</map>' > /data/user/0/$PKG/shared_prefs/dsh_phone.xml \
+  && chown $APP_UID0:$APP_UID0 /data/user/0/$PKG/shared_prefs /data/user/0/$PKG/shared_prefs/dsh_phone.xml && chmod 660 /data/user/0/$PKG/shared_prefs/dsh_phone.xml \
+  && restorecon -R /data/user/0/$PKG/shared_prefs" > "$LOGS/phone-prefs.txt" 2>&1 || fail "could not switch phone control on ($(cat "$LOGS/phone-prefs.txt"))"
 adb shell am start-foreground-service -n "$PKG/io.github.ccch1mneyyy.dsh_app.runtime.DshService" \
   -a io.github.ccch1mneyyy.dsh_app.START --ez install_first true > "$LOGS/app-start.txt" 2>&1
 start=$(date +%s); READY=""
@@ -235,6 +261,25 @@ if [ -n "$READY" ]; then
   fi
 else
   fail "app's own engine did not reach ready"; tail -60 "$LOGS/app-engine.log"
+fi
+# The app's own engine with phone control on: the bridge must see DSH list the phone tools
+# (PhoneControl logs it), not only listen; the relay's report names the host bridge.json.
+if [ -n "$READY" ]; then
+  MCP=""
+  for _ in $(seq 1 30); do
+    adb shell "cat $APPLOG 2>/dev/null" | tr -d '\r' > "$LOGS/app-engine.log"
+    grep -q 'phone control: MCP server connected' "$LOGS/app-engine.log" && { MCP=1; break; }
+    sleep 2
+  done
+  grep -E 'phone (bridge|control)|phone-relay' "$LOGS/app-engine.log" | tail -8 | tee "$LOGS/app-phone.txt"
+  RELAY=$(adb shell "find $FILES -path '*/opt/dsh-app/phone/relay-status.json' -exec cat {} \\; 2>/dev/null" | tr -d '\r' | head -1)
+  echo "relay-status: $RELAY" | tee -a "$LOGS/app-phone.txt"
+  if [ -n "$MCP" ]; then pass "app's own engine: phone MCP server connected (DSH listed the phone tools over the bridge)"
+  else fail "app's own engine: phone MCP server never connected ($(grep -E 'phone control' "$LOGS/app-engine.log" | tail -2 | tr '\n' ' '))"; fi
+  case "$RELAY" in
+    *'"ok":true'*'"config":"/data/'*) pass "relay read the host-path bridge.json ($(echo "$RELAY" | grep -o '"config":"[^"]*"'))" ;;
+    *) fail "relay status: ${RELAY:-none}" ;;
+  esac
 fi
 grep -nE 'OpenSSL configuration error|com\.termux.*(Permission denied|EACCES)|(Permission denied|EACCES).*com\.termux' "$LOGS/app-engine.log" \
   && fail "Termux path errors in the app's engine log" || pass "no Termux path errors in the app's engine log"

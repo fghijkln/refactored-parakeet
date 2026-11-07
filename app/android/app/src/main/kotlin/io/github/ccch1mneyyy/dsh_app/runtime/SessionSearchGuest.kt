@@ -22,14 +22,22 @@ object SessionSearchGuest {
     private const val WEB_PATCH_ARG = "--patch /etc/dsh-app/dsh-web.patch.yml"
     private const val DSH_WEB = "/usr/local/bin/dsh web"
 
+    const val INDEX = "/root/.dsh/session-search.sqlite"
+
+    /**
+     * [index]: the guest spelling for the PRoot/direct engines; the Parakeet host engine opens the
+     * index in-process on Android's own `/`, where `/root` does not exist, so it gets the host path.
+     */
     // l10n:keep guest config comment
-    val PATCH_YAML = """# dsh-app: message search (搜索对话). The DSH App rewrites this file at every engine start and
+    fun patchYaml(index: String = INDEX): String = """# dsh-app: message search (搜索对话). The DSH App rewrites this file at every engine start and
 # passes it with --patch on normal launches (never in safe mode). Edits do not survive.
 - id: session-query-sqlite
   config:
-    path: /root/.dsh/session-search.sqlite
+    path: ${GuestPaths.yamlQuote(index)}
     openAt: first-search
 """
+
+    val PATCH_YAML: String get() = patchYaml()
 
     /** The launch shell command with the overlay right after the app's own one; null when [arg] is not the `dsh web` launch. */
     fun launchArg(arg: String): String? {
@@ -43,15 +51,16 @@ object SessionSearchGuest {
     fun file(rootfs: File) = File(rootfs, PATCH.removePrefix("/"))
 
     /** Writes the overlay; false (and no file) when it could not be written, so the launch leaves it out. */
-    fun writeFiles(rootfs: File): Boolean {
+    fun writeFiles(rootfs: File, host: Boolean = false): Boolean {
         val target = file(rootfs)
+        val yaml = patchYaml(GuestPaths.childPath(rootfs, INDEX, host))
         return try {
             val dir = target.parentFile ?: throw IOException("no parent for ${target.path}")
             if (!dir.isDirectory && !dir.mkdirs()) throw IOException("could not create ${dir.path}")
-            if (!target.exists() || target.readText() != PATCH_YAML) {
+            if (!target.exists() || target.readText() != yaml) {
                 val tmp = File(dir, ".${target.name}.dsh-app-${System.nanoTime()}.tmp")
                 try {
-                    tmp.writeText(PATCH_YAML)
+                    tmp.writeText(yaml)
                     tmp.setReadable(true, false)
                     if (!tmp.renameTo(target)) throw IOException("could not replace ${target.path}")
                 } finally {

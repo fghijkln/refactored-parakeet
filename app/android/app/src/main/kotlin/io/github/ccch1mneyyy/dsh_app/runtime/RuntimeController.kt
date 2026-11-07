@@ -311,8 +311,10 @@ class RuntimeController private constructor(private val app: Context) : DshProce
                 val storage = pendingPhoneStorage && PhoneStorage.isGranted(app) && PhoneStorage.binds().isNotEmpty()
                 PhoneStorage.syncShortcut(installer.rootfs, storage)
                 // Phone control: bridge up and guest files written before DSH starts; off in safe mode.
-                val phone = PhoneControl.get(app).prepareLaunch(installer.rootfs, safe) { log(it, "system") }
-                if (!safe && !SessionSearchGuest.writeFiles(installer.rootfs)) {
+                // Host engine (Android's own /): overlays name host paths, not guest ones (GuestPaths).
+                val hostEngine = HostLaunch.isHost(manifest.raw.optString("engine", "proot"))
+                val phone = PhoneControl.get(app).prepareLaunch(installer.rootfs, safe, hostEngine) { log(it, "system") }
+                if (!safe && !SessionSearchGuest.writeFiles(installer.rootfs, hostEngine)) {
                     log("[dsh-app] message search overlay not written; searching matches titles only", "system")
                 }
                 if (!safe && !AppAuthGuest.writeFiles(app, installer.rootfs)) {

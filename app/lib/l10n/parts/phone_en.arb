@@ -212,6 +212,8 @@
   "phoneControlAfterEngineStarts": "Takes effect when the engine starts",
   "phoneControlNeedsAccessibility": "One step left: turn on accessibility",
   "phoneControlReady": "Ready to control your phone",
+  "phoneControlToolsConnecting": "Connecting the phone tools to the engine…",
+  "phoneControlToolsNotConnected": "The phone tools did not reach the engine. Restart the engine; if it persists, export diagnostics",
   "phoneControlSetup": "Setup",
   "phoneControlAccessibilityService": "Accessibility service",
   "phoneControlAccessibilityReady": "Ready to read the screen and tap",

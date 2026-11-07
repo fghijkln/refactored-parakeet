@@ -56,6 +56,18 @@ class PhoneBridge(
     /** Connections that passed uid + token since [start] (DSH's probe plus the serving relay). */
     val authenticatedConnections: Int get() = authed.get()
 
+    private val liveAuthed = AtomicInteger()
+    private val listed = AtomicInteger()
+
+    /** Authenticated connections open right now. */
+    val liveConnections: Int get() = liveAuthed.get()
+
+    /** `tools/list` requests answered since [start]: the MCP client really mounted the server. */
+    val toolsListed: Int get() = listed.get()
+
+    /** Called once per [start] when the first `tools/list` is answered (PhoneControl logs it). */
+    @Volatile var onToolsListed: (() -> Unit)? = null
+
     /** Binds a fresh abstract socket (and TCP when [withTcp]); returns what the relay needs. */
     @Synchronized
     fun start(withTcp: Boolean): PhoneGuest.Endpoint {
@@ -80,6 +92,7 @@ class PhoneBridge(
         }
         running = true
         authed.set(0)
+        listed.set(0)
         val ep = PhoneGuest.Endpoint(name, port, token)
         endpoint = ep
         local?.let { s -> thread(name = "dsh-phone-accept", isDaemon = true) { acceptLocal(s, token) } }
@@ -178,6 +191,7 @@ class PhoneBridge(
         }
         open += sock
         thread(name = "dsh-phone-conn", isDaemon = true) {
+            var counted = false
             try {
                 timeout(HELLO_TIMEOUT_MS)
                 val hello = readLine(input, MAX_HELLO) ?: return@thread
@@ -186,6 +200,8 @@ class PhoneBridge(
                     return@thread
                 }
                 authed.incrementAndGet()
+                liveAuthed.incrementAndGet()
+                counted = true
                 timeout(0)
                 val lock = Object()
                 fun send(line: String) {
@@ -196,9 +212,13 @@ class PhoneBridge(
                 }
                 while (running) {
                     val line = readLine(input, MAX_LINE) ?: break
+                    val toolsList = line.contains("\"tools/list\"")
                     when (val d = server.dispatch(line)) {
                         McpServer.Dispatch.None -> Unit
-                        is McpServer.Dispatch.Reply -> send(d.line)
+                        is McpServer.Dispatch.Reply -> {
+                            send(d.line)
+                            if (toolsList && listed.incrementAndGet() == 1) runCatching { onToolsListed?.invoke() }
+                        }
                         is McpServer.Dispatch.Call -> calls.execute {
                             val reply = d.run()
                             runCatching { send(reply) }
@@ -207,6 +227,7 @@ class PhoneBridge(
                 }
             } catch (_: Exception) {
             } finally {
+                if (counted) liveAuthed.decrementAndGet()
                 open -= sock
                 runCatching { sock.close() }
                 slots.release()

@@ -87,6 +87,9 @@ void main() {
         return {
           'enabled': true,
           'bridgeListening': true,
+          'mcp': connected
+              ? {'state': 'connected', 'toolsListed': 1, 'connections': 1, 'error': null}
+              : {'state': 'failed', 'toolsListed': 0, 'connections': 0, 'error': 'config /var/lib/dsh-app/phone/bridge.json: ENOENT'},
           'a11y': {'enabled': true, 'serviceConnected': connected},
           'task': {
             'app': 'PRIVATE_APP',
@@ -101,10 +104,14 @@ void main() {
         'available': true,
         'enabled': true,
         'bridgeListening': true,
+        'mcp': connected
+            ? {'state': 'connected', 'toolsListed': 1}
+            : {'state': 'failed', 'toolsListed': 0, 'error': 'config /var/lib/dsh-app/phone/bridge.json: ENOENT'},
         'a11y': {'enabled': true, 'serviceConnected': connected},
       });
       final markdown = diagnosticsMarkdown(snapshot);
       expect(markdown, contains('无障碍开关：true · 服务已连接：$connected'));
+      expect(markdown, contains(connected ? 'phone MCP: connected' : 'phone MCP: failed (config /var/lib/dsh-app/phone/bridge.json: ENOENT)'));
       final exported = readZip(DiagnosticsBundle.build(snapshot)).map((e) => utf8.decode(e.data)).join();
       expect('$exported\n$markdown', isNot(contains('PRIVATE_')));
       expect(calls, ['status']);

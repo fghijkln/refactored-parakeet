@@ -4,6 +4,7 @@
 
 import 'dart:convert';
 
+import '../phone/phone_channel.dart';
 import '../state/app_info.dart';
 import 'diagnostics_bundle.dart';
 import 'redact.dart';
@@ -129,6 +130,9 @@ void _phone(StringBuffer b, DiagnosticsSnapshot s) {
     b
       ..writeln('- 手机操控开关：${phone.enabled} · 桥接监听：${phone.bridgeListening}')
       ..writeln('- 无障碍开关：${phone.a11y.enabled} · 服务已连接：${phone.a11y.serviceConnected}');
+    if (phone.mcp.state != PhoneMcpState.unknown) {
+      b.writeln('- phone MCP: ${phone.mcp.state.name}${phone.mcp.error == null ? '' : ' (${phone.mcp.error})'}');
+    }
   }
   b.writeln();
 }

@@ -16814,6 +16814,18 @@ abstract class L10n {
   /// **'可以操作手机'**
   String get phoneControlReady;
 
+  /// No description provided for @phoneControlToolsConnecting.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在把手机工具接入引擎…'**
+  String get phoneControlToolsConnecting;
+
+  /// No description provided for @phoneControlToolsNotConnected.
+  ///
+  /// In zh, this message translates to:
+  /// **'手机工具没接入引擎，重启引擎试试；仍不行请导出诊断'**
+  String get phoneControlToolsNotConnected;
+
   /// No description provided for @phoneControlSetup.
   ///
   /// In zh, this message translates to:

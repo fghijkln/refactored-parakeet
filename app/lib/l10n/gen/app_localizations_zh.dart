@@ -9096,6 +9096,12 @@ class L10nZh extends L10n {
   String get phoneControlReady => '可以操作手机';
 
   @override
+  String get phoneControlToolsConnecting => '正在把手机工具接入引擎…';
+
+  @override
+  String get phoneControlToolsNotConnected => '手机工具没接入引擎，重启引擎试试；仍不行请导出诊断';
+
+  @override
   String get phoneControlSetup => '准备';
 
   @override
