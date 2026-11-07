@@ -2,7 +2,7 @@
 """Parakeet release-APK checks (CI).
 
   parakeet_apk_check.py <apk> <zh|en> --arb-dir <dir with the ORIGINAL app_zh.arb/app_en.arb>
-                        [--aapt2 PATH] [--version 0.2.1]
+                        [--aapt2 PATH] [--version 0.2.2]
 
 1. aapt2 badging: package dev.parakeet.dshgo, versionName, not debuggable, and
    only the build language among the packaged locales.
@@ -222,7 +222,7 @@ def main():
     ap.add_argument("lang", choices=("zh", "en"))
     ap.add_argument("--arb-dir", required=True)
     ap.add_argument("--aapt2", default=os.environ.get("AAPT2", "aapt2"))
-    ap.add_argument("--version", default="0.2.1")
+    ap.add_argument("--version", default="0.2.2")
     ap.add_argument("--report", help="write every flagged string with its APK entries to this JSON file")
     a = ap.parse_args()
     other = "en" if a.lang == "zh" else "zh"

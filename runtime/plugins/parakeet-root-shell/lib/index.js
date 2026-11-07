@@ -107,12 +107,14 @@ function settingsPath() {
 }
 
 const DESCRIPTION =
-  'Run a shell command as root (uid 0) on this Android device through su (KernelSU). ' +
-  'Use it only for operations that need root (system files, /data, device properties, other apps, ' +
-  'settings put, pm/am as root, mount, iptables, logcat of all processes). Prefer the normal bash tool ' +
-  'for everything else. The shell is Android\'s /system/bin/sh (mksh/toybox), not bash. stdout and stderr are merged. ' +
-  'The user may be asked to approve each command. Never run commands that can brick the device ' +
-  '(writing to /dev/block, flashing partitions, wiping data) unless the user explicitly asked for exactly that.';
+  'Run a shell command as root (uid 0) on this Android device through su (KernelSU / Magisk). ' +
+  'When the user granted Root in the app (Settings › System permissions › Root), the normal bash tool already ' +
+  'runs every command as root and this tool is not needed; otherwise use it only for operations that need root ' +
+  '(system files, /data, device properties, other apps, settings put, pm/am as root, mount, iptables, logcat of all processes). ' +
+  'The shell is Android\'s /system/bin/sh (mksh/toybox), not bash. stdout and stderr are merged. ' +
+  'Commands that can brick the device (writing /dev/block or partitions, flashing, mounting or writing /system, /vendor, ' +
+  '/product and other system partitions, formatting or wiping /data or /metadata) always need the user\'s confirmation; ' +
+  'never run them unless the user explicitly asked for exactly that.';
 
 export async function apply(ctx, config) {
   const session = new PersistentSu();
@@ -121,6 +123,21 @@ export async function apply(ctx, config) {
     const v = typeof config?.[key]?.get === 'function' ? config[key].get() : config?.[key];
     return v ?? fallback;
   };
+
+  // DSH_PARAKEET_ROOT=1 in the model's shell environment while Root is granted, so the
+  // agent can tell (and the managed-variable list in its prompt says so).
+  ctx.inject?.(['shellEnv'], (envCtx) => {
+    envCtx.shellEnv.register({
+      name: 'parakeet-root',
+      variables: {
+        DSH_PARAKEET_ROOT: {
+          description: '"1" when the user granted Root in the app: every bash command runs as root (uid 0) through su; ' +
+            'commands that can brick the device (partition writes, system partitions, wiping /data) ask the user first.',
+        },
+      },
+      resolve: () => (readAppSettings(settingsPath()).rootExec === true ? { DSH_PARAKEET_ROOT: '1' } : {}),
+    });
+  });
 
   // Brick-risk gate on the agent's bash tool (root execution mode, v0.2.2).
   ctx.on?.('tools/pre-execute', async (exec, next) => {

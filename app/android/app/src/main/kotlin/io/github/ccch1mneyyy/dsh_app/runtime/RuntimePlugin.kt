@@ -169,6 +169,18 @@ class RuntimePlugin :
                 result.success(null)
             }
             "storageStatus" -> result.success(PhoneStorage.status(appContext))
+            // Parakeet: 设置 › 系统权限 › Root (RootAccess.kt). The grant runs `su -c id`, which can
+            // wait on the KernelSU / Magisk prompt: off the main thread, answered back on it.
+            "rootStatus" -> result.success(RootAccess.status(rootfsDir()))
+            "requestRoot" -> {
+                val on = call.argument<Boolean>("enabled") ?: true
+                val main = android.os.Handler(android.os.Looper.getMainLooper())
+                Thread({
+                    val answer = runCatching { RootAccess.request(rootfsDir(), on) }
+                        .getOrElse { mapOf("enabled" to false, "available" to false, "detail" to (it.message ?: it.toString())) }
+                    main.post { result.success(answer) }
+                }, "parakeet-root").start()
+            }
             "requestStorage" -> requestStorage(result)
             "openAllFilesAccess" -> {
                 val intent = PhoneStorage.allFilesAccessIntent(appContext)
@@ -178,6 +190,9 @@ class RuntimePlugin :
             else -> result.notImplemented()
         }
     }
+
+    /** The runtime root (RuntimeInstaller: filesDir/runtime/rootfs). */
+    private fun rootfsDir(): java.io.File = java.io.File(appContext.filesDir, "runtime/rootfs")
 
     /** The system's "ignore battery optimizations" dialog, else the closest settings page that opens. */
     private fun requestBatteryExempt(): Boolean {

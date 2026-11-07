@@ -15,8 +15,10 @@ The DSH Go name, logos and mascots are not licensed under AGPL-3.0; see [ASSETS.
 - Host engine: DeepSeek Harness runs directly on Android through Termux's Bionic node and bash,
   shipped unmodified as native libraries (no Ubuntu rootfs, no PRoot). Since 0.2.1 the engine
   gets its own OpenSSL config and CA bundle so an installed Termux can't break it.
-- Root: root_shell / root_status tools through su (KernelSU supported), behind DSH's approval
-  prompt; device-destroying commands are always confirmed.
+- Root: root_shell / root_status tools through su (KernelSU supported). Since 0.2.2 a Root item in
+  Settings › System permissions makes root the agent's execution mode: once granted, every shell
+  command the agent runs executes as uid 0 through su (runtime/direct/root-exec.mjs), and only
+  brick-risk commands (runtime/plugins/parakeet-root-shell/lib/brick.js) ask for confirmation.
 - Models: OpenAI-compatible, Anthropic and DeepSeek providers.
 - Separate pure-Chinese and pure-English APKs (tooling/parakeet-locale.sh, tooling/parakeet_locale.py);
   /sdcard can be chosen as a workspace.

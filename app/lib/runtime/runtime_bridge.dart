@@ -622,6 +622,28 @@ class RuntimeBridge {
   /// Opens Android's "All files access" page for this app (fallback when legacy access is off).
   Future<bool> openAllFilesAccess() async => await _methods.invokeMethod<bool>('openAllFilesAccess') ?? false;
 
+  /// Parakeet: 设置 › 系统权限 › Root. The stored grant and whether an su binary exists
+  /// (no prompt); null without the native side.
+  Future<RootAccessStatus?> rootStatus() async {
+    try {
+      return RootAccessStatus.fromMap(await _methods.invokeMapMethod<Object?, Object?>('rootStatus') ?? const {});
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
+  /// Turns Root on (runs `su -c id`, which makes KernelSU / Magisk ask the user, and stores
+  /// the grant only when it answers uid 0) or off; null without the native side.
+  Future<RootAccessStatus?> requestRoot(bool enabled) async {
+    try {
+      return RootAccessStatus.fromMap(
+        await _methods.invokeMapMethod<Object?, Object?>('requestRoot', {'enabled': enabled}) ?? const {},
+      );
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
   /// Whether Android leaves DSH out of battery optimization; null without the native side.
   Future<bool?> batteryExempt() async {
     try {
@@ -718,4 +740,26 @@ class RuntimeBridge {
     }
     return null;
   }
+}
+
+/// Parakeet: where Root stands (RootAccess.kt).
+class RootAccessStatus {
+  const RootAccessStatus({required this.enabled, this.suPath, this.kernelSu = false, this.detail});
+
+  factory RootAccessStatus.fromMap(Map<Object?, Object?> map) => RootAccessStatus(
+    enabled: map['enabled'] == true,
+    suPath: map['suPath'] is String ? map['suPath'] as String : null,
+    kernelSu: map['kernelSu'] == true,
+    detail: map['detail'] is String ? map['detail'] as String : null,
+  );
+
+  /// The agent's commands run as uid 0.
+  final bool enabled;
+
+  /// The su binary found, if any.
+  final String? suPath;
+  final bool kernelSu;
+
+  /// Why a grant failed (su's own message).
+  final String? detail;
 }

@@ -7,11 +7,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../l10n/l10n.dart';
+import '../../parakeet/host_engine.dart';
 import '../../state/access_state.dart';
 import '../access/access_text.dart';
 import '../access/access_widgets.dart';
 import '../access/system_access_route.dart';
 import '../shell/page_frame.dart';
+import 'root_access_section.dart';
 import 'settings_widgets.dart';
 
 /// ```
@@ -64,6 +66,8 @@ class _SystemAccessPageState extends ConsumerState<SystemAccessPage> {
       title: l10n.accessPageTitle,
       subtitle: Text(l10n.accessPageSubtitle),
       children: [
+        // Parakeet: Root (the agent runs as uid 0 once granted).
+        if (parakeetHostEngine) const RootAccessSection(),
         if (readings != null)
           for (final feature in AccessFeature.values)
             if ([

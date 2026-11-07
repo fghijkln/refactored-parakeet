@@ -297,6 +297,23 @@ def scrub_packages():
         print("package messages in English: %s" % rel)
 
 
+def scrub_root_text():
+    """Settings › System permissions › Root (app/lib/parakeet/root_text.dart) carries both
+    languages between PARAKEET-ROOT-TEXT markers; the prepared tree keeps the build
+    language's table and makes the other one a copy of it, so the APK is one language."""
+    p = os.path.join(ROOT, "app/lib/parakeet/root_text.dart")
+    if not os.path.isfile(p):
+        return
+    other = "en" if LANG == "zh" else "zh"
+    text = open(p, encoding="utf-8").read()
+    block = re.compile(r"// PARAKEET-ROOT-TEXT %s BEGIN\n.*?// PARAKEET-ROOT-TEXT %s END\n" % (other, other), re.S)
+    new, n = block.subn("// PARAKEET-ROOT-TEXT %s: build language only (tooling/parakeet_locale.py)\n"
+                        "const Map<String, String> _%s = _%s;\n" % (other, other, LANG), text)
+    assert n == 1, "root_text.dart: %s block not found" % other
+    open(p, "w", encoding="utf-8").write(new)
+    print("root permission text: %s only" % LANG)
+
+
 def scrub_replay_viewer():
     """The exported conversation page (app/lib/share_code/replay_viewer.g.dart) carries the
     viewer's zh and en tables and picks one from the browser: one language here, its
@@ -429,6 +446,7 @@ if __name__ == "__main__":
     assert LANG in ("zh", "en")
     scrub_assets()  # before blank_arb: reads the unblanked ARB files
     scrub_replay_viewer()
+    scrub_root_text()
     scrub_packages()
     blank_arb(os.path.join(ROOT, "app/lib/l10n/app_%s.arb" % LANG))
     merge_android(os.path.join(ROOT, "app/android/app/src/main/res"))
